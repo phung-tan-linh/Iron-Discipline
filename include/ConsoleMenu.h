@@ -1,0 +1,34 @@
+#ifndef CONSOLE_MENU_H
+#define CONSOLE_MENU_H
+#include "Models.h"
+#include <string>
+#include <vector>
+class ConsoleMenu
+{
+private:
+    AppState currentState;
+    std::vector<Category> basicList;
+    void clearScreen();
+    void safeWait();
+    void handleInvalidState();
+    std::string getCurrentDate();
+    std::string formatTime(int minutes);
+    void printBasicList();
+    void processAndDisplayStats(int daysOffset, const std::string &title, bool isWeek);
+    void showMainMenu();
+    void showViewActivity();
+    void showMenuWeek();
+    void showMenuDay();
+    void showLimitApp();
+    void showAddBasicLimit();
+    void showAddCustomLimit();
+    void handleCustomOuterList();
+    void handleCustomBasicList();
+    void handleRemoveLimitLogic();
+
+public:
+    ConsoleMenu();
+    void init(const std::string &basicListFile);
+    void run();
+};
+#endif
