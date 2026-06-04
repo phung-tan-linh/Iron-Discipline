@@ -1,7 +1,6 @@
 #include "../include/ConsoleMenu.h"
 #include "../include/FileManager.h"
 #include "../include/InputValidator.h"
-#include "../include/AnalyticsManager.h"
 #include "../include/ProcessManager.h"
 #include <iostream>
 #include <iomanip>
@@ -47,136 +46,16 @@ void ConsoleMenu::printBasicList()
         std::cout << "\n";
     }
 }
-void ConsoleMenu::processAndDisplayStats(int daysOffset, const std::string &title, bool isWeek)
-{
-    clearScreen();
-    std::cout << title << ":\n";
-    std::vector<HistoryLog> allLogs = FileManager::readHistoryLog();
-    TimeStats stats = AnalyticsManager::calculateTimeStatistics(allLogs);
-    int totalMins = 0;
-    float avgMins = 0.0f;
-    if (title == "Hom nay")
-        totalMins = stats.totalToday;
-    else if (title == "Hom qua")
-        totalMins = stats.totalYesterday;
-    else if (title == "Tuan nay")
-    {
-        totalMins = stats.totalThisWeek;
-        avgMins = stats.avgThisWeek;
-    }
-    else if (title == "Tuan truoc")
-    {
-        totalMins = stats.totalLastWeek;
-        avgMins = stats.avgLastWeek;
-    }
-    if (isWeek)
-    {
-        std::cout << " - Tong thoi gian su dung: " << formatTime(totalMins) << ".\n";
-        std::cout << " - Trung binh " << title << ": " << formatTime(static_cast<int>(avgMins)) << " / ngay.\n";
-    }
-    else
-        std::cout << " - Thoi gian su dung: " << formatTime(totalMins) << ".\n";
-    std::cout << " - Dung nhieu nhat:\n";
-    auto filteredLogs = AnalyticsManager::filterLogsByTime(allLogs, title);
-    auto top10 = AnalyticsManager::getTop10Apps(filteredLogs);
-    if (top10.empty())
-        std::cout << "   (Chua co du lieu ghi nhan)\n";
-    else
-        for (size_t i = 0; i < top10.size(); ++i)
-            std::cout << "   " << i + 1 << ". " << top10[i].first << " : " << formatTime(top10[i].second) << ".\n";
-    std::cout << "\nQuay lai? [y/n] : ";
-}
 void ConsoleMenu::showMainMenu()
 {
     clearScreen();
     std::string choice;
-    std::cout << "Ki luat thep\n1. Xem cac hoat dong.\n2. Gioi han ung dung.\n3. Thoat.\nChon? [1/2/3] : ";
+    std::cout << "Ki luat thep\n1. Gioi han ung dung.\n2. Thoat.\nChon? [1/2] : ";
     std::getline(std::cin, choice);
     if (choice == "1")
-        currentState = AppState::VIEW_ACTIVITY;
-    else if (choice == "2")
         currentState = AppState::LIMIT_APP;
-    else if (choice == "3")
-        currentState = AppState::EXIT;
-    else
-        handleInvalidState();
-}
-void ConsoleMenu::showMenuWeek()
-{
-    while (true)
-    {
-        clearScreen();
-        std::cout << "Xem tuan:\n1. Tuan nay.\n2. Tuan truoc.\n3. Quay lai.\nChon? [1/2/3] : ";
-        std::string choice;
-        std::getline(std::cin, choice);
-        if (choice == "1" || choice == "2")
-        {
-            while (true)
-            {
-                processAndDisplayStats(choice == "1" ? 0 : -7, choice == "1" ? "Tuan nay" : "Tuan truoc", true);
-                std::string subChoice;
-                std::getline(std::cin, subChoice);
-                if (subChoice == "y" || subChoice == "Y")
-                    break;
-                else if (subChoice != "n" && subChoice != "N")
-                {
-                    handleInvalidState();
-                    return;
-                }
-            }
-        }
-        else if (choice == "3")
-            break;
-        else
-        {
-            handleInvalidState();
-            return;
-        }
-    }
-}
-void ConsoleMenu::showMenuDay()
-{
-    while (true)
-    {
-        clearScreen();
-        std::cout << "Xem ngay:\n1. Hom nay.\n2. Hom qua.\n3. Quay lai.\nChon? [1/2/3] : ";
-        std::string choice;
-        std::getline(std::cin, choice);
-        if (choice == "1" || choice == "2")
-        {
-            while (true)
-            {
-                processAndDisplayStats(choice == "1" ? 0 : -1, choice == "1" ? "Hom nay" : "Hom qua", false);
-                std::string subChoice;
-                std::getline(std::cin, subChoice);
-                if (subChoice == "y" || subChoice == "Y")
-                    break;
-                else if (subChoice != "n" && subChoice != "N")
-                {
-                    handleInvalidState();
-                    return;
-                }
-            }
-        }
-        else if (choice == "3")
-            break;
-        else
-        {
-            handleInvalidState();
-            return;
-        }
-    }
-}
-void ConsoleMenu::showViewActivity()
-{
-    clearScreen();
-    std::cout << "* Xem cac hoat dong:\n1. Tuan.\n2. Ngay.\nChon? [1/2] : ";
-    std::string choice;
-    std::getline(std::cin, choice);
-    if (choice == "1")
-        showMenuWeek();
     else if (choice == "2")
-        showMenuDay();
+        currentState = AppState::EXIT;
     else
         handleInvalidState();
 }
@@ -590,9 +469,6 @@ void ConsoleMenu::run()
         {
         case AppState::MAIN_MENU:
             showMainMenu();
-            break;
-        case AppState::VIEW_ACTIVITY:
-            showViewActivity();
             break;
         case AppState::LIMIT_APP:
             showLimitApp();

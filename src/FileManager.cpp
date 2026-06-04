@@ -93,23 +93,6 @@ void FileManager::loadBasicList(const std::string &filename, std::vector<Categor
         }
     }
 }
-std::vector<HistoryLog> FileManager::readHistoryLog()
-{
-    std::vector<HistoryLog> logs;
-    auto csvData = readCSV("history_log.csv");
-    for (const auto &row : csvData)
-        if (row.size() >= 3)
-        {
-            try
-            {
-                logs.push_back({standardizeDate(row[0]), row[1], std::stoi(row[2])});
-            }
-            catch (...)
-            {
-            }
-        }
-    return logs;
-}
 std::vector<ActiveLimit> FileManager::getActiveLimits()
 {
     std::vector<ActiveLimit> limits;

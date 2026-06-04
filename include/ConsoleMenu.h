@@ -16,9 +16,6 @@ private:
     void printBasicList();
     void processAndDisplayStats(int daysOffset, const std::string &title, bool isWeek);
     void showMainMenu();
-    void showViewActivity();
-    void showMenuWeek();
-    void showMenuDay();
     void showLimitApp();
     void showAddBasicLimit();
     void showAddCustomLimit();

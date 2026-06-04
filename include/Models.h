@@ -27,10 +27,4 @@ struct ActiveLimit
     std::string name;
     int timeLimit;
 };
-struct HistoryLog
-{
-    std::string date;
-    std::string name;
-    int timeUsed;
-};
 #endif

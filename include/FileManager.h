@@ -12,7 +12,6 @@ private:
     static std::string standardizeDate(const std::string &dateStr);
 public:
     static void loadBasicList(const std::string &filename, std::vector<Category> &outList);
-    static std::vector<HistoryLog> readHistoryLog();
     static std::vector<ActiveLimit> getActiveLimits();
     static void saveAllActiveLimits(const std::vector<ActiveLimit> &limits);
     static void addOrUpdateActiveLimit(const ActiveLimit &limit);
