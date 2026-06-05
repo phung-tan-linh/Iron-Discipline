@@ -8,8 +8,6 @@
 #include <map>
 #include <algorithm>
 #include <windows.h>
-#include <thread>
-#include <atomic>
 std::string FileManager::standardizeDate(const std::string &dateStr)
 {
     std::string result = trim(dateStr);
@@ -93,6 +91,15 @@ void FileManager::loadBasicList(const std::string &filename, std::vector<Categor
         }
     }
 }
+std::vector<HistoryLog> FileManager::readHistoryLog()
+{
+    std::vector<HistoryLog> logs;
+    auto csvData = readCSV("history_log.csv");
+    for (const auto &row : csvData)
+        if (row.size() >= 3)
+            logs.push_back({standardizeDate(row[0]), row[1], std::stoi(row[2])});
+    return logs;
+}
 std::vector<ActiveLimit> FileManager::getActiveLimits()
 {
     std::vector<ActiveLimit> limits;
@@ -105,15 +112,7 @@ std::vector<ActiveLimit> FileManager::getActiveLimits()
             if (isOlderThan14Days(date))
                 needsCleanup = true;
             else
-            {
-                try
-                {
-                    limits.push_back({date, std::stoi(row[1]), row[2], std::stoi(row[3])});
-                }
-                catch (...)
-                {
-                }
-            }
+                limits.push_back({date, std::stoi(row[1]), row[2], std::stoi(row[3])});
         }
     if (needsCleanup)
         saveAllActiveLimits(limits);
@@ -156,25 +155,15 @@ std::map<std::string, int> FileManager::loadDailyUsage()
 {
     std::map<std::string, int> m;
     auto d = readCSV("daily_usage.csv");
-    if (d.empty())
-        return m;
     std::string t = getCurrentDateStr();
-    if (d[0].size() >= 3 && d[0][0] != t)
+    if (!d.empty() && d[0].size() >= 3 && d[0][0] != t)
     {
         std::ofstream h("history_log.csv", std::ios::app);
         if (h.is_open())
         {
             for (auto &r : d)
                 if (r.size() >= 3)
-                {
-                    try
-                    {
-                        h << r[0] << "," << r[1] << "," << std::stoi(r[2]) / 60 << "\n";
-                    }
-                    catch (...)
-                    {
-                    }
-                }
+                    h << r[0] << "," << r[1] << "," << std::stoi(r[2]) / 60 << "\n";
             h.close();
         }
         std::ofstream u("daily_usage.csv", std::ios::trunc);
@@ -182,26 +171,19 @@ std::map<std::string, int> FileManager::loadDailyUsage()
     }
     for (auto &r : d)
         if (r.size() >= 3)
-        {
-            try
-            {
-                m[r[1]] = std::stoi(r[2]);
-            }
-            catch (...)
-            {
-            }
-        }
+            m[r[1]] = std::stoi(r[2]);
     return m;
 }
-void FileManager::saveAllDailyUsage(const std::map<std::string, int> &usageMap)
+void FileManager::updateDailyUsageItem(const std::string &id, int s)
 {
+    auto m = loadDailyUsage();
+    m[id] = s;
     std::string t = getCurrentDateStr();
     std::ofstream f("daily_usage_temp.csv", std::ios::trunc);
     if (f.is_open())
     {
-        for (const auto &p : usageMap)
-            if (p.second > 0)
-                f << t << "," << p.first << "," << p.second << "\n";
+        for (const auto &p : m)
+            f << t << "," << p.first << "," << p.second << "\n";
         f.close();
         remove("daily_usage.csv");
         rename("daily_usage_temp.csv", "daily_usage.csv");

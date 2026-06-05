@@ -6,7 +6,6 @@
 #include <shellapi.h>
 #include <atomic>
 #include <thread>
-#include <chrono>
 #include "../include/ConsoleMenu.h"
 #include "../include/UIManager.h"
 #include "../include/ProcessManager.h"
@@ -47,7 +46,8 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         {
             if (GetAsyncKeyState(VK_MENU) & 0x8000)
             {
-                HWND hForeground = GetForegroundWindow(), hConsole = GetConsoleWindow();
+                HWND hForeground = GetForegroundWindow();
+                HWND hConsole = GetConsoleWindow();
                 if (hConsole != NULL && hForeground == hConsole)
                 {
                     ShowWindow(hConsole, SW_HIDE);
@@ -83,11 +83,14 @@ void RunConsoleWorker()
         if (hSysMenu != NULL)
             DeleteMenu(hSysMenu, SC_CLOSE, MF_BYCOMMAND);
         LONG_PTR exStyle = GetWindowLongPtr(hConsole, GWL_EXSTYLE);
-        SetWindowLongPtr(hConsole, GWL_EXSTYLE, (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW);
+        exStyle = (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+        SetWindowLongPtr(hConsole, GWL_EXSTYLE, exStyle);
         SetForegroundWindow(hConsole);
     }
     SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
-    FILE *fpIn, *fpOut, *fpErr;
+    FILE *fpIn;
+    FILE *fpOut;
+    FILE *fpErr;
     freopen_s(&fpIn, "CONIN$", "r", stdin);
     freopen_s(&fpOut, "CONOUT$", "w", stdout);
     freopen_s(&fpErr, "CONOUT$", "w", stderr);
@@ -112,7 +115,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (lParam == WM_LBUTTONUP)
         {
             if (!isConsoleOpen)
+            {
                 std::thread(RunConsoleWorker).detach();
+            }
             else
             {
                 HWND hConsole = GetConsoleWindow();
@@ -126,7 +131,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         break;
     case WM_ACTIVATE_OLD_INSTANCE:
         if (!isConsoleOpen)
+        {
             std::thread(RunConsoleWorker).detach();
+        }
         else
         {
             HWND hConsole = GetConsoleWindow();

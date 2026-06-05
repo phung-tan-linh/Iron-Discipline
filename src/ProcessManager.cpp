@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cctype>
 #include <thread>
-#include <atomic>
 static HHOOK g_hKeyboardHook = NULL;
 static std::vector<ActiveLimit> g_currentLimits;
 static LRESULT CALLBACK AntiBypassKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
@@ -31,11 +30,9 @@ ProcessManager::~ProcessManager()
 void ProcessManager::addItem(TrackableItem *item) { trackingList.push_back(item); }
 void ProcessManager::forceSaveData()
 {
-    auto usageMap = FileManager::loadDailyUsage();
     for (TrackableItem *item : trackingList)
         if (item->getTimeUsedSeconds() > 0)
-            usageMap[item->getSharedIdentifier()] = item->getTimeUsedSeconds();
-    FileManager::saveAllDailyUsage(usageMap);
+            FileManager::updateDailyUsageItem(item->getSharedIdentifier(), item->getTimeUsedSeconds());
 }
 std::string ProcessManager::getActiveWindowTitle(HWND hwnd)
 {
@@ -69,7 +66,7 @@ void ProcessManager::killAppProcess(DWORD pid)
     {
         TerminateProcess(hProcess, 0);
         CloseHandle(hProcess);
-        std::cout << "\n[SYSTEM] Da ep dong App (PID: " << pid << ").";
+        std::cout << "[SYSTEM] Da ep dong App (PID: " << pid << ").\n";
     }
 }
 void ProcessManager::closeBrowserTab(HWND hwnd)
@@ -90,7 +87,7 @@ void ProcessManager::closeBrowserTab(HWND hwnd)
         inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
         SendInput(4, inputs, sizeof(INPUT));
     }
-    std::cout << "\n[SYSTEM] Da dong tab trinh duyet.";
+    std::cout << "[SYSTEM] Da dong tab trinh duyet.\n";
 }
 void ProcessManager::showPersistentWarning(const std::string &message, const std::string &title) { MessageBoxA(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING | MB_TOPMOST); }
 std::string ProcessManager::toLowerCase(const std::string &str)
@@ -123,9 +120,7 @@ void ProcessManager::monitorAndBlock()
                 }
             if (!found)
             {
-                auto usageMap = FileManager::loadDailyUsage();
-                usageMap[(*it)->getSharedIdentifier()] = (*it)->getTimeUsedSeconds();
-                FileManager::saveAllDailyUsage(usageMap);
+                FileManager::updateDailyUsageItem((*it)->getSharedIdentifier(), (*it)->getTimeUsedSeconds());
                 delete *it;
                 it = trackingList.erase(it);
             }
@@ -209,22 +204,28 @@ void ProcessManager::monitorAndBlock()
                             Sleep(1000);
                             killAppProcess(p);
                         }
-                        if (!g_isWarningActive)
-                        {
-                            std::thread([]()
-                                        { UIManager::ShowWarning(2); })
-                                .detach();
-                        }
+                        std::thread([appName = i->getName()]()
+                                    { MessageBoxA(NULL, (appName + " đã hết giờ sử dụng hôm nay! Kỷ luật thép!").c_str(), "CẢNH BÁO", MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL | MB_SETFOREGROUND); })
+                            .detach();
                     }
                 }
             }
         }
         if (activeItem != prevActiveItem)
-            tc = 0;
-        tc++;
-        if (tc >= 300)
         {
-            forceSaveData();
+            if (prevActiveItem && prevActiveItem->getTimeUsedSeconds() > 0)
+                FileManager::updateDailyUsageItem(prevActiveItem->getName(), prevActiveItem->getTimeUsedSeconds());
+            tc = 0;
+        }
+        tc++;
+        if (tc >= 60)
+        {
+            for (auto *i : trackingList)
+                if (i == activeItem && i->getTimeUsedSeconds() > 0)
+                {
+                    FileManager::updateDailyUsageItem(i->getName(), i->getTimeUsedSeconds());
+                    break;
+                }
             tc = 0;
         }
         Sleep(1000);
