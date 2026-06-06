@@ -1,13 +1,18 @@
+// [PLAN]: Tái cấu trúc UIManager thành vòng lặp nền (RenderOverlayLoop). Xử lý Anti-Spam 3 giây, an toàn con trỏ Font và tối ưu hóa Message Loop.
 #ifndef UIMANAGER_H
 #define UIMANAGER_H
 #include <windows.h>
 #include <atomic>
-extern std::atomic<bool> g_isWarningActive;
+#include <thread>
+
+extern std::atomic<int> g_WarningActive;
+
 class UIManager
 {
 public:
     static void Init();
     static void ShowWarning(int level);
+    static void RenderOverlayLoop();
     static void Cleanup();
 
 private:

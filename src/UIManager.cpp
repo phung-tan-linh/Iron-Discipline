@@ -1,10 +1,16 @@
-#include "UIManager.h"
+// [PLAN]: Triển khai vòng lặp Render vô cực độc lập. Xử lý logic hiển thị/ẩn cửa sổ dựa trên g_WarningActive. Bổ sung Fallback Font an toàn.
+#include "../include/UIManager.h"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include <d3d11.h>
+#include <chrono>
+
 #pragma comment(lib, "d3d11.lib")
-std::atomic<bool> g_isWarningActive{false};
+
+std::atomic<int> g_WarningActive{0};
+DWORD g_WarningStartTime = 0;
+
 HWND UIManager::hwnd = NULL;
 bool UIManager::initialized = false;
 static ID3D11Device *g_pd3dDevice = NULL;
@@ -13,7 +19,9 @@ static IDXGISwapChain *g_pSwapChain = NULL;
 static ID3D11RenderTargetView *g_mainRenderTargetView = NULL;
 static ImFont *fBig = nullptr;
 static ImFont *fSmall = nullptr;
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 LRESULT WINAPI UIManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
@@ -45,6 +53,7 @@ LRESULT WINAPI UIManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
+
 bool UIManager::CreateDeviceD3D(HWND hWnd)
 {
     DXGI_SWAP_CHAIN_DESC sd;
@@ -64,14 +73,17 @@ bool UIManager::CreateDeviceD3D(HWND hWnd)
     sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     D3D_FEATURE_LEVEL featureLevel;
     const D3D_FEATURE_LEVEL featureLevelArray[2] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
+    
     if (D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext) != S_OK)
         return false;
+        
     ID3D11Texture2D *pBackBuffer;
     g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
     g_pd3dDevice->CreateRenderTargetView(pBackBuffer, NULL, &g_mainRenderTargetView);
     pBackBuffer->Release();
     return true;
 }
+
 void UIManager::CleanupDeviceD3D()
 {
     if (g_mainRenderTargetView)
@@ -95,102 +107,150 @@ void UIManager::CleanupDeviceD3D()
         g_pd3dDevice = NULL;
     }
 }
+
 void UIManager::Init()
 {
     SetProcessDPIAware();
     if (initialized)
         return;
+        
     WNDCLASSEXA wc = {sizeof(WNDCLASSEXA), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, "UIMgr", NULL};
     RegisterClassExA(&wc);
-    int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN), x = 0, y = 0;
-    hwnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "UIMgr", "", WS_POPUP | WS_VISIBLE, x, y, w, h, NULL, NULL, wc.hInstance, NULL);
+    
+    int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
+    hwnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "UIMgr", "", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
+    
     if (!CreateDeviceD3D(hwnd))
     {
         CleanupDeviceD3D();
         UnregisterClassA("UIMgr", wc.hInstance);
         return;
     }
+    
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL;
+    
     fBig = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 60.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
     fSmall = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 30.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+    
     initialized = true;
+    
+    std::thread(&UIManager::RenderOverlayLoop).detach();
 }
+
 void UIManager::ShowWarning(int level)
 {
-    g_isWarningActive = true;
     if (!initialized)
         Init();
-    UpdateWindow(hwnd);
-    bool done = false;
-    while (!done)
+        
+    g_WarningActive = level;
+    g_WarningStartTime = GetTickCount();
+}
+
+void UIManager::RenderOverlayLoop()
+{
+    while (true)
     {
+        int currentLevel = g_WarningActive.load();
+        
         MSG msg;
         while (PeekMessage(&msg, NULL, 0U, 0U, PM_REMOVE))
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
             if (msg.message == WM_QUIT)
-                done = true;
+                return;
         }
-        if (done)
-            break;
-        if (GetForegroundWindow() != hwnd)
+
+        if (currentLevel == 0)
+        {
+            if (IsWindowVisible(hwnd))
+            {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        if (!IsWindowVisible(hwnd))
+        {
+            ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
+        }
+        else if (GetForegroundWindow() != hwnd)
+        {
+            SetForegroundWindow(hwnd);
+        }
+
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+        
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 10.0f);
-        ImGui::PushStyleColor(ImGuiCol_Border, level == 1 ? ImVec4(1, 1, 0, 1) : ImVec4(1, 0, 0, 1));
+        ImGui::PushStyleColor(ImGuiCol_Border, currentLevel == 1 ? ImVec4(1, 1, 0, 1) : ImVec4(1, 0, 0, 1));
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.85f));
-        ImGui::Begin("W", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground);
+        
+        ImGui::Begin("W", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
         ImVec2 ws = ImGui::GetWindowSize();
-        ImGui::PushFont(fBig);
-        const char *tB = level == 1 ? u8"NHẮC NHỞ!" : u8"HẾT GIỜ!";
-        ImGui::PushStyleColor(ImGuiCol_Text, level == 1 ? ImVec4(1, 1, 0, 1) : ImVec4(1, 0, 0, 1));
+        
+        if (fBig) ImGui::PushFont(fBig);
+        const char *tB = currentLevel == 1 ? u8"NHẮC NHỞ!" : u8"HẾT GIỜ!";
+        ImGui::PushStyleColor(ImGuiCol_Text, currentLevel == 1 ? ImVec4(1, 1, 0, 1) : ImVec4(1, 0, 0, 1));
         ImVec2 tsB = ImGui::CalcTextSize(tB);
         ImGui::SetCursorPos(ImVec2((ws.x - tsB.x) * 0.5f, ws.y * 0.2f));
         ImGui::Text(tB);
         ImGui::PopStyleColor();
-        ImGui::PopFont();
-        ImGui::PushFont(fSmall);
-        const char *tS = level == 1 ? u8"Còn 5 phút nữa thôi. Hãy lưu lại tiến trình ngay đi!" : u8"Thì phải gì ạ? Thì phải... Phải chịu, đừng có kêu!";
+        if (fBig) ImGui::PopFont();
+        
+        if (fSmall) ImGui::PushFont(fSmall);
+        const char *tS = currentLevel == 1 ? u8"Còn 5 phút nữa thôi. Hãy lưu lại tiến trình ngay đi!" : u8"Thì phải gì ạ? Thì phải... Phải chịu, đừng có kêu!";
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
         ImVec2 tsS = ImGui::CalcTextSize(tS);
         ImGui::SetCursorPos(ImVec2((ws.x - tsS.x) * 0.5f, ws.y * 0.5f));
         ImGui::Text(tS);
         ImGui::PopStyleColor();
-        ImGui::PopFont();
-        ImGui::PushFont(fSmall);
-        const char *btn = level == 1 ? u8"BIẾT RỒI" : u8"ĐÃ HIỂU";
-        ImVec2 bs(200, 60);
-        ImGui::SetCursorPos(ImVec2((ws.x - bs.x) * 0.5f, ws.y * 0.75f));
-        if (ImGui::Button(btn, bs))
-            done = true;
-        ImGui::PopFont();
+        if (fSmall) ImGui::PopFont();
+
+        if (GetTickCount() - g_WarningStartTime >= 3000)
+        {
+            if (fSmall) ImGui::PushFont(fSmall);
+            const char *btn = currentLevel == 1 ? u8"BIẾT RỒI" : u8"ĐÃ HIỂU";
+            ImVec2 bs(200, 60);
+            ImGui::SetCursorPos(ImVec2((ws.x - bs.x) * 0.5f, ws.y * 0.75f));
+            if (ImGui::Button(btn, bs))
+            {
+                g_WarningActive = 0;
+            }
+            if (fSmall) ImGui::PopFont();
+        }
+        
         ImGui::End();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar();
         ImGui::Render();
+        
         const float cb[4] = {0.f, 0.f, 0.f, 0.f};
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, NULL);
         g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, cb);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         g_pSwapChain->Present(1, 0);
     }
-    g_isWarningActive = false;
-    ShowWindow(hwnd, SW_HIDE);
 }
+
 void UIManager::Cleanup()
 {
     if (!initialized)
         return;
+        
+    g_WarningActive = 0;
+    
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

@@ -1,3 +1,4 @@
+// [PLAN]: Triển khai MsgWaitForMultipleObjects để tối ưu vòng lặp. Gọi syncDailyUsageToFile mỗi 5 phút. Xóa bỏ Sleep và MessageBox chặn luồng.
 #include "../include/ProcessManager.h"
 #include "../include/FileManager.h"
 #include "../include/UIManager.h"
@@ -9,31 +10,29 @@
 #include <algorithm>
 #include <cctype>
 #include <thread>
-static HHOOK g_hKeyboardHook = NULL;
+#include <map>
+#include <mutex>
+
 static std::vector<ActiveLimit> g_currentLimits;
-static LRESULT CALLBACK AntiBypassKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
-{
-    if (nCode == HC_ACTION && g_isWarningActive)
-    {
-        KBDLLHOOKSTRUCT *p = (KBDLLHOOKSTRUCT *)lParam;
-        if (p->vkCode == VK_LWIN || p->vkCode == VK_RWIN || p->vkCode == VK_TAB || p->vkCode == VK_ESCAPE || p->vkCode == VK_LMENU || p->vkCode == VK_RMENU || p->vkCode == VK_LCONTROL || p->vkCode == VK_RCONTROL)
-            return 1;
-    }
-    return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
-}
+
 ProcessManager::~ProcessManager()
 {
     for (TrackableItem *item : trackingList)
         delete item;
     trackingList.clear();
 }
+
 void ProcessManager::addItem(TrackableItem *item) { trackingList.push_back(item); }
+
 void ProcessManager::forceSaveData()
 {
     for (TrackableItem *item : trackingList)
-        if (item->getTimeUsedSeconds() > 0)
-            FileManager::updateDailyUsageItem(item->getSharedIdentifier(), item->getTimeUsedSeconds());
+    {
+        FileManager::updateDailyUsageItem(item->getSharedIdentifier(), item->getTimeUsedSeconds());
+    }
+    FileManager::syncDailyUsageToFile();
 }
+
 std::string ProcessManager::getActiveWindowTitle(HWND hwnd)
 {
     char windowTitle[256];
@@ -41,6 +40,7 @@ std::string ProcessManager::getActiveWindowTitle(HWND hwnd)
         return std::string(windowTitle);
     return "";
 }
+
 std::string ProcessManager::getActiveProcessName(DWORD pid)
 {
     std::string processName = "";
@@ -59,6 +59,7 @@ std::string ProcessManager::getActiveProcessName(DWORD pid)
     }
     return processName;
 }
+
 void ProcessManager::killAppProcess(DWORD pid)
 {
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
@@ -69,6 +70,7 @@ void ProcessManager::killAppProcess(DWORD pid)
         std::cout << "[SYSTEM] Da ep dong App (PID: " << pid << ").\n";
     }
 }
+
 void ProcessManager::closeBrowserTab(HWND hwnd)
 {
     SetForegroundWindow(hwnd);
@@ -89,7 +91,7 @@ void ProcessManager::closeBrowserTab(HWND hwnd)
     }
     std::cout << "[SYSTEM] Da dong tab trinh duyet.\n";
 }
-void ProcessManager::showPersistentWarning(const std::string &message, const std::string &title) { MessageBoxA(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING | MB_TOPMOST); }
+
 std::string ProcessManager::toLowerCase(const std::string &str)
 {
     std::string lowerStr = str;
@@ -97,16 +99,21 @@ std::string ProcessManager::toLowerCase(const std::string &str)
                    { return std::tolower(c); });
     return lowerStr;
 }
+
 bool ProcessManager::isAppMatch(const std::string &appName, const std::string &processName) { return toLowerCase(processName).find(toLowerCase(appName)) != std::string::npos; }
+
 bool ProcessManager::isWebsiteMatch(const std::string &url, const std::string &windowTitle) { return toLowerCase(windowTitle).find(toLowerCase(url)) != std::string::npos; }
+
 void ProcessManager::reloadActiveLimits() { g_currentLimits = FileManager::getActiveLimits(); }
+
 void ProcessManager::monitorAndBlock()
 {
     std::string c = FileManager::getCurrentDateStr();
     int tc = 0;
     TrackableItem *activeItem = nullptr;
-    TrackableItem *prevActiveItem = nullptr;
     reloadActiveLimits();
+    FileManager::loadDailyUsage();
+
     while (true)
     {
         for (auto it = trackingList.begin(); it != trackingList.end();)
@@ -125,10 +132,9 @@ void ProcessManager::monitorAndBlock()
                 it = trackingList.erase(it);
             }
             else
-            {
                 ++it;
-            }
         }
+
         for (const auto &limit : g_currentLimits)
         {
             bool found = false;
@@ -145,12 +151,19 @@ void ProcessManager::monitorAndBlock()
                     newItem = new AppItem(limit.name, limit.timeLimit);
                 else
                     newItem = new WebItem(limit.name, limit.timeLimit);
-                std::map<std::string, int> usage = FileManager::loadDailyUsage();
-                if (usage.count(limit.name))
-                    newItem->setTimeUsedSeconds(usage[limit.name]);
+
+                int savedSecs = 0;
+                {
+                    std::lock_guard<std::mutex> lock(FileManager::g_usageMutex);
+                    if (FileManager::g_dailyUsageCache.find(newItem->getSharedIdentifier()) != FileManager::g_dailyUsageCache.end())
+                        savedSecs = FileManager::g_dailyUsageCache[newItem->getSharedIdentifier()];
+                }
+                
+                newItem->setTimeUsedSeconds(savedSecs);
                 trackingList.push_back(newItem);
             }
         }
+
         std::string n = FileManager::getCurrentDateStr();
         if (c != n)
         {
@@ -159,10 +172,11 @@ void ProcessManager::monitorAndBlock()
             {
                 i->setTimeUsedSeconds(0);
                 i->setFirstWarningShown(false);
+                i->setSecondWarningShown(false);
             }
             c = n;
         }
-        prevActiveItem = activeItem;
+
         activeItem = nullptr;
         HWND h = GetForegroundWindow();
         if (h)
@@ -170,12 +184,16 @@ void ProcessManager::monitorAndBlock()
             DWORD p = 0;
             GetWindowThreadProcessId(h, &p);
             std::string w = getActiveWindowTitle(h), r = getActiveProcessName(p);
+            
             for (auto *i : trackingList)
             {
                 if ((i->getType() == "Application" && isAppMatch(i->getName(), r)) || (i->getType() == "Website" && isWebsiteMatch(i->getName(), w)))
                 {
                     i->addTimeUsedSeconds(1);
                     activeItem = i;
+                    
+                    FileManager::updateDailyUsageItem(i->getSharedIdentifier(), i->getTimeUsedSeconds());
+
                     int m = i->getTimeLimit();
                     for (auto &x : g_currentLimits)
                         if (x.name == i->getName())
@@ -183,51 +201,35 @@ void ProcessManager::monitorAndBlock()
                             m = x.timeLimit;
                             break;
                         }
+                        
                     int u = i->getTimeUsedSeconds() / 60;
-                    if (u >= m - 5 && !i->getIsFirstWarningShown())
-                    {
-                        std::thread([]()
-                                    { UIManager::ShowWarning(1); })
-                            .detach();
-                        i->setFirstWarningShown(true);
-                    }
+                    
                     if (u >= m)
                     {
                         if (i->getType() == "Website")
-                        {
                             closeBrowserTab(h);
-                        }
                         else
-                        {
-                            if (h)
-                                PostMessage(h, WM_CLOSE, 0, 0);
-                            Sleep(1000);
                             killAppProcess(p);
-                        }
-                        std::thread([appName = i->getName()]()
-                                    { MessageBoxA(NULL, (appName + " đã hết giờ sử dụng hôm nay! Kỷ luật thép!").c_str(), "CẢNH BÁO", MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL | MB_SETFOREGROUND); })
-                            .detach();
+                            
+                        i->setSecondWarningShown(true);
+                        UIManager::ShowWarning(2);
+                    }
+                    else if (u >= m - 5 && !i->getIsFirstWarningShown())
+                    {
+                        UIManager::ShowWarning(1);
+                        i->setFirstWarningShown(true);
                     }
                 }
             }
         }
-        if (activeItem != prevActiveItem)
-        {
-            if (prevActiveItem && prevActiveItem->getTimeUsedSeconds() > 0)
-                FileManager::updateDailyUsageItem(prevActiveItem->getName(), prevActiveItem->getTimeUsedSeconds());
-            tc = 0;
-        }
+
         tc++;
-        if (tc >= 60)
+        if (tc >= 300)
         {
-            for (auto *i : trackingList)
-                if (i == activeItem && i->getTimeUsedSeconds() > 0)
-                {
-                    FileManager::updateDailyUsageItem(i->getName(), i->getTimeUsedSeconds());
-                    break;
-                }
+            forceSaveData();
             tc = 0;
         }
-        Sleep(1000);
+        
+        MsgWaitForMultipleObjects(0, NULL, FALSE, 1000, QS_ALLEVENTS);
     }
 }

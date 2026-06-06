@@ -1,7 +1,9 @@
+// [PLAN]: Khởi chạy UIManager ngay từ đầu cùng với ProcessManager. Thay thế cờ boolean cũ bằng cờ int để tích hợp các mức cảnh báo.
 #ifndef UNICODE
 #define UNICODE
 #define _UNICODE
 #endif
+
 #include <windows.h>
 #include <shellapi.h>
 #include <atomic>
@@ -9,13 +11,17 @@
 #include "../include/ConsoleMenu.h"
 #include "../include/UIManager.h"
 #include "../include/ProcessManager.h"
+
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_ACTIVATE_OLD_INSTANCE (WM_USER + 2)
-extern std::atomic<bool> g_isWarningActive;
+
+extern std::atomic<int> g_WarningActive;
+
 ProcessManager g_ProcMgr;
 std::atomic<bool> isConsoleOpen(false);
 const wchar_t CLASS_NAME[] = L"IronDisciplineHiddenWindow";
 HHOOK g_hKeyboardHook = NULL;
+
 BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType)
 {
     switch (dwCtrlType)
@@ -30,12 +36,13 @@ BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType)
         return FALSE;
     }
 }
+
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode == HC_ACTION)
     {
         KBDLLHOOKSTRUCT *pKeyBoard = (KBDLLHOOKSTRUCT *)lParam;
-        if (g_isWarningActive)
+        if (g_WarningActive > 0)
         {
             bool isAlt = (pKeyBoard->flags & LLKHF_ALTDOWN) != 0;
             bool isCtrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -58,6 +65,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
     }
     return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
 }
+
 void EnableAutoStart()
 {
     HKEY hKey;
@@ -70,6 +78,7 @@ void EnableAutoStart()
         RegCloseKey(hKey);
     }
 }
+
 void RunConsoleWorker()
 {
     if (isConsoleOpen)
@@ -94,19 +103,20 @@ void RunConsoleWorker()
     freopen_s(&fpIn, "CONIN$", "r", stdin);
     freopen_s(&fpOut, "CONOUT$", "w", stdout);
     freopen_s(&fpErr, "CONOUT$", "w", stderr);
+    
     ConsoleMenu app;
     app.init("basic_list.csv");
     app.run();
-    if (fpIn)
-        fclose(fpIn);
-    if (fpOut)
-        fclose(fpOut);
-    if (fpErr)
-        fclose(fpErr);
+    
+    if (fpIn) fclose(fpIn);
+    if (fpOut) fclose(fpOut);
+    if (fpErr) fclose(fpErr);
+    
     SetConsoleCtrlHandler(ConsoleCtrlHandler, FALSE);
     FreeConsole();
     isConsoleOpen = false;
 }
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
@@ -153,6 +163,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     return 0;
 }
+
 extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
 {
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"IronDiscipline_SingleInstance_Mutex");
@@ -169,9 +180,11 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
         CloseHandle(hMutex);
         return 0;
     }
-    std::thread([]()
-                { g_ProcMgr.monitorAndBlock(); })
-        .detach();
+    
+    UIManager::Init();
+    
+    std::thread([]() { g_ProcMgr.monitorAndBlock(); }).detach();
+    
     EnableAutoStart();
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = WndProc;
@@ -180,9 +193,11 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     if (!RegisterClassW(&wc))
         return 0;
+        
     HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Tray Background Worker", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
     if (hwnd == NULL)
         return 0;
+        
     NOTIFYICONDATAW nid = {0};
     nid.cbSize = sizeof(NOTIFYICONDATAW);
     nid.hWnd = hwnd;
@@ -192,16 +207,23 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
     nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     wcsncpy_s(nid.szTip, L"Kỉ luật thép - Iron Discipline", _TRUNCATE);
     Shell_NotifyIconW(NIM_ADD, &nid);
+    
     g_hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInstance, 0);
+    
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))
     {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+    
     if (g_hKeyboardHook)
         UnhookWindowsHookEx(g_hKeyboardHook);
+        
     Shell_NotifyIconW(NIM_DELETE, &nid);
+    
+    UIManager::Cleanup();
+    
     if (hMutex)
     {
         ReleaseMutex(hMutex);

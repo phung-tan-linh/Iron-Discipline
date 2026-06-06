@@ -1,3 +1,4 @@
+// [PLAN]: Triển khai an toàn luồng (Thread-safe) cho RAM Buffer bằng std::mutex. Tách biệt hoàn toàn việc update số liệu (trên RAM) và việc đồng bộ file (xuống đĩa).
 #include "../include/FileManager.h"
 #include "../include/InputValidator.h"
 #include <fstream>
@@ -5,9 +6,12 @@
 #include <iostream>
 #include <ctime>
 #include <iomanip>
-#include <map>
 #include <algorithm>
 #include <windows.h>
+
+std::map<std::string, int> FileManager::g_dailyUsageCache;
+std::mutex FileManager::g_usageMutex;
+
 std::string FileManager::standardizeDate(const std::string &dateStr)
 {
     std::string result = trim(dateStr);
@@ -16,6 +20,7 @@ std::string FileManager::standardizeDate(const std::string &dateStr)
             c = '-';
     return result;
 }
+
 bool FileManager::isOlderThan14Days(const std::string &dateStr)
 {
     std::string cleanDate = standardizeDate(dateStr);
@@ -36,6 +41,7 @@ bool FileManager::isOlderThan14Days(const std::string &dateStr)
     }
     return false;
 }
+
 std::string FileManager::trim(const std::string &str)
 {
     size_t first = str.find_first_not_of(" \t\r\n");
@@ -44,6 +50,7 @@ std::string FileManager::trim(const std::string &str)
     size_t last = str.find_last_not_of(" \t\r\n");
     return str.substr(first, (last - first + 1));
 }
+
 std::vector<std::vector<std::string>> FileManager::readCSV(const std::string &filename)
 {
     std::vector<std::vector<std::string>> data;
@@ -64,6 +71,7 @@ std::vector<std::vector<std::string>> FileManager::readCSV(const std::string &fi
     file.close();
     return data;
 }
+
 void FileManager::loadBasicList(const std::string &filename, std::vector<Category> &outList)
 {
     auto csvData = readCSV("basic_list.csv");
@@ -91,15 +99,7 @@ void FileManager::loadBasicList(const std::string &filename, std::vector<Categor
         }
     }
 }
-std::vector<HistoryLog> FileManager::readHistoryLog()
-{
-    std::vector<HistoryLog> logs;
-    auto csvData = readCSV("history_log.csv");
-    for (const auto &row : csvData)
-        if (row.size() >= 3)
-            logs.push_back({standardizeDate(row[0]), row[1], std::stoi(row[2])});
-    return logs;
-}
+
 std::vector<ActiveLimit> FileManager::getActiveLimits()
 {
     std::vector<ActiveLimit> limits;
@@ -118,6 +118,7 @@ std::vector<ActiveLimit> FileManager::getActiveLimits()
         saveAllActiveLimits(limits);
     return limits;
 }
+
 void FileManager::saveAllActiveLimits(const std::vector<ActiveLimit> &limits)
 {
     std::ofstream outFile("active_limits.csv", std::ios::trunc);
@@ -128,6 +129,7 @@ void FileManager::saveAllActiveLimits(const std::vector<ActiveLimit> &limits)
         outFile.close();
     }
 }
+
 void FileManager::addOrUpdateActiveLimit(const ActiveLimit &limit)
 {
     auto limits = getActiveLimits();
@@ -143,49 +145,74 @@ void FileManager::addOrUpdateActiveLimit(const ActiveLimit &limit)
         limits.push_back(limit);
     saveAllActiveLimits(limits);
 }
+
 std::string FileManager::getCurrentDateStr()
 {
     auto t = std::time(nullptr);
     auto tm = *std::localtime(&t);
     std::ostringstream oss;
-    oss << std::setfill('0') << std::setw(2) << tm.tm_mday << "-" << std::setfill('0') << std::setw(2) << (tm.tm_mon + 1) << "-" << (tm.tm_year + 1900);
+    oss << std::setfill('0') << std::setw(2) << tm.tm_mday << "-" 
+        << std::setfill('0') << std::setw(2) << (tm.tm_mon + 1) << "-" 
+        << (tm.tm_year + 1900);
     return oss.str();
 }
+
 std::map<std::string, int> FileManager::loadDailyUsage()
 {
     std::map<std::string, int> m;
     auto d = readCSV("daily_usage.csv");
     std::string t = getCurrentDateStr();
+    
     if (!d.empty() && d[0].size() >= 3 && d[0][0] != t)
     {
-        std::ofstream h("history_log.csv", std::ios::app);
-        if (h.is_open())
-        {
-            for (auto &r : d)
-                if (r.size() >= 3)
-                    h << r[0] << "," << r[1] << "," << std::stoi(r[2]) / 60 << "\n";
-            h.close();
-        }
         std::ofstream u("daily_usage.csv", std::ios::trunc);
+        if (u.is_open()) {
+            u.close();
+        }
+        std::lock_guard<std::mutex> lock(g_usageMutex);
+        g_dailyUsageCache.clear();
         return m;
     }
+    
     for (auto &r : d)
+    {
         if (r.size() >= 3)
             m[r[1]] = std::stoi(r[2]);
+    }
+            
+    std::lock_guard<std::mutex> lock(g_usageMutex);
+    g_dailyUsageCache = m;
     return m;
 }
-void FileManager::updateDailyUsageItem(const std::string &id, int s)
+
+void FileManager::saveAllDailyUsage(const std::map<std::string, int> &usageCache)
 {
-    auto m = loadDailyUsage();
-    m[id] = s;
+    if (usageCache.empty())
+        return;
     std::string t = getCurrentDateStr();
     std::ofstream f("daily_usage_temp.csv", std::ios::trunc);
     if (f.is_open())
     {
-        for (const auto &p : m)
+        for (const auto &p : usageCache)
             f << t << "," << p.first << "," << p.second << "\n";
         f.close();
         remove("daily_usage.csv");
         rename("daily_usage_temp.csv", "daily_usage.csv");
     }
+}
+
+void FileManager::updateDailyUsageItem(const std::string& id, int seconds)
+{
+    std::lock_guard<std::mutex> lock(g_usageMutex);
+    g_dailyUsageCache[id] = seconds;
+}
+
+void FileManager::syncDailyUsageToFile()
+{
+    std::map<std::string, int> cacheCopy;
+    {
+        std::lock_guard<std::mutex> lock(g_usageMutex);
+        cacheCopy = g_dailyUsageCache;
+    }
+    saveAllDailyUsage(cacheCopy);
 }
