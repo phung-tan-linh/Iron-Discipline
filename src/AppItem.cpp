@@ -1,9 +1,11 @@
-// [PLAN]: Triển khai AppItem, ghi đè enforceBlock để ép đóng ứng dụng bằng TerminateProcess.
+// [PLAN]: Triển khai AppItem, xử lý ép đóng tiến trình độc lập với cờ cảnh báo, gọi UIManager để hiển thị UI.
 #include "../include/AppItem.h"
+#include "../include/UIManager.h"
 #include <windows.h>
 
-AppItem::AppItem(std::string appName, int limitMinutes)
-    : TrackableItem(appName, limitMinutes) {}
+AppItem::AppItem(std::string appName, int limitMinutes, std::string execPath)
+    : TrackableItem(appName, limitMinutes), executablePath(std::move(execPath)),
+      isFirstWarningShown(false), isSecondWarningShown(false) {}
 
 void AppItem::displayInfo() const
 {
@@ -17,15 +19,32 @@ std::string AppItem::getType() const
     return "Application";
 }
 
-void AppItem::enforceBlock(HWND hwnd, DWORD pid)
+void AppItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 {
-    if (pid != 0)
+    if (timeUsedMinutes >= globalLimitMinutes)
     {
-        HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-        if (hProcess != NULL)
+        if (pid != 0)
         {
-            TerminateProcess(hProcess, 0);
-            CloseHandle(hProcess);
+            HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+            if (hProcess != NULL)
+            {
+                TerminateProcess(hProcess, 0);
+                CloseHandle(hProcess);
+            }
+        }
+        
+        if (!isSecondWarningShown)
+        {
+            UIManager::ShowWarning(2);
+            isSecondWarningShown = true;
+        }
+    }
+    else if (globalLimitMinutes - timeUsedMinutes <= 5)
+    {
+        if (!isFirstWarningShown)
+        {
+            UIManager::ShowWarning(1);
+            isFirstWarningShown = true;
         }
     }
 }

@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai MsgWaitForMultipleObjects để tối ưu vòng lặp. Gọi syncDailyUsageToFile mỗi 5 phút. Xóa bỏ Sleep và MessageBox chặn luồng. Tối ưu so sánh chuỗi và đa hình enforceBlock.
+// [PLAN]: Triển khai Lazy Initialization (chỉ tạo TrackableItem khi phát hiện tiến trình), gọi đa hình checkAndEnforce, dọn dẹp bộ nhớ an toàn.
 #include "../include/ProcessManager.h"
 #include "../include/FileManager.h"
 #include "../include/UIManager.h"
@@ -83,7 +83,6 @@ void ProcessManager::monitorAndBlock()
 {
     std::string c = FileManager::getCurrentDateStr();
     int tc = 0;
-    TrackableItem *activeItem = nullptr;
     reloadActiveLimits();
     FileManager::loadDailyUsage();
 
@@ -93,11 +92,13 @@ void ProcessManager::monitorAndBlock()
         {
             bool found = false;
             for (const auto &limit : g_currentLimits)
+            {
                 if (limit.name == (*it)->getName())
                 {
                     found = true;
                     break;
                 }
+            }
             if (!found)
             {
                 if ((*it)->getTimeUsedSeconds() > 0)
@@ -108,35 +109,8 @@ void ProcessManager::monitorAndBlock()
                 it = trackingList.erase(it);
             }
             else
-                ++it;
-        }
-
-        for (const auto &limit : g_currentLimits)
-        {
-            bool found = false;
-            for (auto *item : trackingList)
-                if (item->getName() == limit.name)
-                {
-                    found = true;
-                    break;
-                }
-            if (!found)
             {
-                TrackableItem *newItem;
-                if (limit.name.find(".exe") != std::string::npos)
-                    newItem = new AppItem(limit.name, limit.timeLimit);
-                else
-                    newItem = new WebItem(limit.name, limit.timeLimit);
-
-                int savedSecs = 0;
-                {
-                    std::lock_guard<std::mutex> lock(FileManager::g_usageMutex);
-                    if (FileManager::g_dailyUsageCache.find(newItem->getName()) != FileManager::g_dailyUsageCache.end())
-                        savedSecs = FileManager::g_dailyUsageCache[newItem->getName()];
-                }
-                
-                newItem->setTimeUsedSeconds(savedSecs);
-                trackingList.push_back(newItem);
+                ++it;
             }
         }
 
@@ -146,54 +120,66 @@ void ProcessManager::monitorAndBlock()
             FileManager::loadDailyUsage();
             for (auto *i : trackingList)
             {
-                i->setTimeUsedSeconds(0);
-                i->setFirstWarningShown(false);
-                i->setSecondWarningShown(false);
+                delete i;
             }
+            trackingList.clear();
             c = n;
         }
 
-        activeItem = nullptr;
         HWND h = GetForegroundWindow();
         if (h)
         {
             DWORD p = 0;
             GetWindowThreadProcessId(h, &p);
-            std::string w = getActiveWindowTitle(h), r = getActiveProcessName(p);
+            std::string w = getActiveWindowTitle(h);
+            std::string r = getActiveProcessName(p);
             
-            for (auto *i : trackingList)
+            for (const auto &limit : g_currentLimits)
             {
-                if ((i->getType() == "Application" && isAppMatch(i->getNameLower(), r)) || (i->getType() == "Website" && isWebsiteMatch(i->getNameLower(), w)))
-                {
-                    i->addTimeUsedSeconds(1);
-                    activeItem = i;
-                    
-                    FileManager::updateDailyUsageItem(i->getName(), i->getTimeUsedSeconds());
+                bool isApp = (limit.name.find(".exe") != std::string::npos);
+                std::string limitLower = limit.name;
+                std::transform(limitLower.begin(), limitLower.end(), limitLower.begin(), [](unsigned char ch) { return std::tolower(ch); });
 
-                    int m = i->getTimeLimit();
-                    for (auto &x : g_currentLimits)
-                        if (x.name == i->getName())
+                bool matched = false;
+                if (isApp && isAppMatch(limitLower, r)) matched = true;
+                else if (!isApp && isWebsiteMatch(limitLower, w)) matched = true;
+
+                if (matched)
+                {
+                    TrackableItem *activeItem = nullptr;
+                    for (auto *item : trackingList)
+                    {
+                        if (item->getName() == limit.name)
                         {
-                            m = x.timeLimit;
+                            activeItem = item;
                             break;
                         }
-                        
-                    int u = i->getTimeUsedSeconds() / 60;
-                    
-                    if (u >= m)
+                    }
+
+                    if (!activeItem)
                     {
-                        if (!i->getIsSecondWarningShown())
+                        if (isApp)
+                            activeItem = new AppItem(limit.name, limit.timeLimit, r);
+                        else
+                            activeItem = new WebItem(limit.name, limit.timeLimit, "");
+
+                        int savedSecs = 0;
                         {
-                            i->enforceBlock(h, p);
-                            UIManager::ShowWarning(2);
-                            i->setSecondWarningShown(true);
+                            std::lock_guard<std::mutex> lock(FileManager::g_usageMutex);
+                            if (FileManager::g_dailyUsageCache.find(activeItem->getName()) != FileManager::g_dailyUsageCache.end())
+                                savedSecs = FileManager::g_dailyUsageCache[activeItem->getName()];
                         }
+                        
+                        activeItem->setTimeUsedSeconds(savedSecs);
+                        trackingList.push_back(activeItem);
                     }
-                    else if (u >= m - 5 && !i->getIsFirstWarningShown())
-                    {
-                        UIManager::ShowWarning(1);
-                        i->setFirstWarningShown(true);
-                    }
+
+                    activeItem->addTimeUsedSeconds(1);
+                    FileManager::updateDailyUsageItem(activeItem->getName(), activeItem->getTimeUsedSeconds());
+
+                    activeItem->checkAndEnforce(h, p, limit.timeLimit);
+                    
+                    break;
                 }
             }
         }

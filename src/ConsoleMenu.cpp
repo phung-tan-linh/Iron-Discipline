@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai UI Console mới không có View Activity, giữ nguyên logic thêm/xóa giới hạn, tránh gọi AnalyticsManager.
+// [PLAN]: Triển khai UI Console, sửa lỗi Compiler khởi tạo struct. Tối ưu Disk I/O bằng cách gom nhóm ghi/đọc (chỉ reload 1 lần sau vòng lặp) và lọc timeMins > 0.
 #include "../include/ConsoleMenu.h"
 #include "../include/FileManager.h"
 #include "../include/InputValidator.h"
@@ -83,6 +83,11 @@ void ConsoleMenu::showAddBasicLimit()
         int failCountInput = 0;
         bool validInput = false, isAll = false;
         
+        std::vector<int> validIds;
+        for (const auto &cat : basicList)
+            for (const auto &item : cat.items)
+                validIds.push_back(item.id);
+                
         while (failCountInput < 3)
         {
             std::string input;
@@ -95,9 +100,7 @@ void ConsoleMenu::showAddBasicLimit()
             }
             if (input == "a" || input == "A")
             {
-                for (const auto &cat : basicList)
-                    for (const auto &item : cat.items)
-                        selectedIds.push_back(item.id);
+                selectedIds = validIds;
                 validInput = isAll = true;
                 break;
             }
@@ -110,18 +113,15 @@ void ConsoleMenu::showAddBasicLimit()
                 continue;
             }
             
-            std::vector<int> validIds;
-            for (const auto &cat : basicList)
-                for (const auto &item : cat.items)
-                    validIds.push_back(item.id);
-                    
             bool allValid = true;
             for (int id : selectedIds)
+            {
                 if (std::find(validIds.begin(), validIds.end(), id) == validIds.end())
                 {
                     allValid = false;
                     break;
                 }
+            }
                 
             if (!allValid)
             {
@@ -166,14 +166,23 @@ void ConsoleMenu::showAddBasicLimit()
         
         if (conf == "y" || conf == "Y")
         {
-            for (int id : selectedIds)
-                for (const auto &cat : basicList)
-                    for (const auto &item : cat.items)
-                        if (item.id == id)
+            if (timeMins > 0)
+            {
+                for (int id : selectedIds)
+                {
+                    for (const auto &cat : basicList)
+                    {
+                        for (const auto &item : cat.items)
                         {
-                            FileManager::addOrUpdateActiveLimit({1, item.name, timeMins});
-                            g_ProcMgr.reloadActiveLimits();
+                            if (item.id == id)
+                            {
+                                FileManager::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
+                            }
                         }
+                    }
+                }
+                g_ProcMgr.reloadActiveLimits();
+            }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
             safeWait();
             currentState = AppState::LIMIT_APP;
@@ -227,9 +236,12 @@ void ConsoleMenu::handleCustomOuterList()
         
         if (conf == "y" || conf == "Y")
         {
-            for (const auto &name : customNames)
+            if (timeMins > 0)
             {
-                FileManager::addOrUpdateActiveLimit({2, name, timeMins});
+                for (const auto &name : customNames)
+                {
+                    FileManager::addOrUpdateActiveLimit(ActiveLimit(2, name, timeMins));
+                }
                 g_ProcMgr.reloadActiveLimits();
             }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
@@ -259,6 +271,11 @@ void ConsoleMenu::handleCustomBasicList()
         std::vector<int> selectedIds;
         bool isAll = false, validSelection = false;
         
+        std::vector<int> validIds;
+        for (const auto &cat : basicList)
+            for (const auto &item : cat.items)
+                validIds.push_back(item.id);
+                
         while (failCountInput < 3)
         {
             std::string input;
@@ -268,9 +285,7 @@ void ConsoleMenu::handleCustomBasicList()
                 return;
             if (input == "a" || input == "A")
             {
-                for (const auto &cat : basicList)
-                    for (const auto &item : cat.items)
-                        selectedIds.push_back(item.id);
+                selectedIds = validIds;
                 isAll = validSelection = true;
                 break;
             }
@@ -279,27 +294,24 @@ void ConsoleMenu::handleCustomBasicList()
             if (selectedIds.empty())
             {
                 failCountInput++;
-                std::cout << "Du lieu nhong hop le. Yeu cau nhap lai:\n-> ";
+                std::cout << "Du lieu khong hop le. Yeu cau nhap lai:\n-> ";
                 continue;
             }
             
-            std::vector<int> validIds;
-            for (const auto &cat : basicList)
-                for (const auto &item : cat.items)
-                    validIds.push_back(item.id);
-                    
             bool allValid = true;
             for (int id : selectedIds)
+            {
                 if (std::find(validIds.begin(), validIds.end(), id) == validIds.end())
                 {
                     allValid = false;
                     break;
                 }
+            }
                 
             if (!allValid)
             {
                 failCountInput++;
-                std::cout << "Du lieu nhong hop le. Yeu cau nhap lai:\n-> ";
+                std::cout << "Du lieu khong hop le. Yeu cau nhap lai:\n-> ";
                 selectedIds.clear();
             }
             else
@@ -329,14 +341,23 @@ void ConsoleMenu::handleCustomBasicList()
         
         if (conf == "y" || conf == "Y")
         {
-            for (int id : selectedIds)
-                for (const auto &cat : basicList)
-                    for (const auto &item : cat.items)
-                        if (item.id == id)
+            if (timeMins > 0)
+            {
+                for (int id : selectedIds)
+                {
+                    for (const auto &cat : basicList)
+                    {
+                        for (const auto &item : cat.items)
                         {
-                            FileManager::addOrUpdateActiveLimit({1, item.name, timeMins});
-                            g_ProcMgr.reloadActiveLimits();
+                            if (item.id == id)
+                            {
+                                FileManager::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
+                            }
                         }
+                    }
+                }
+                g_ProcMgr.reloadActiveLimits();
+            }
                         
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n - Muon them gioi han app/web ngoai danh sach thi an 'y'.\nMuon quay lai menu Gioi han ung dung thi an 'n'.\nChon? [y/n] : ";
             std::string afterConf;
@@ -392,10 +413,12 @@ void ConsoleMenu::handleRemoveLimitLogic()
         auto allLimits = FileManager::getActiveLimits();
         std::vector<ActiveLimit> basicLimits, customLimits;
         for (const auto &limit : allLimits)
+        {
             if (limit.type == 1)
                 basicLimits.push_back(limit);
             else
                 customLimits.push_back(limit);
+        }
                 
         auto sortAlpha = [](const ActiveLimit &a, const ActiveLimit &b)
         { return a.name < b.name; };
@@ -455,11 +478,13 @@ void ConsoleMenu::handleRemoveLimitLogic()
             
             bool allValid = true;
             for (int id : idsToRemove)
+            {
                 if (id < 1 || id >= displayId)
                 {
                     allValid = false;
                     break;
                 }
+            }
                 
             if (!allValid)
             {
@@ -490,8 +515,12 @@ void ConsoleMenu::handleRemoveLimitLogic()
         {
             std::vector<ActiveLimit> limitsToKeep;
             for (const auto &pair : displayMap)
+            {
                 if (std::find(idsToRemove.begin(), idsToRemove.end(), pair.first) == idsToRemove.end())
+                {
                     limitsToKeep.push_back(pair.second);
+                }
+            }
                     
             FileManager::saveAllActiveLimits(limitsToKeep);
             g_ProcMgr.reloadActiveLimits();

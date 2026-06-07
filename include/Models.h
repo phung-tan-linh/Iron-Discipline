@@ -1,4 +1,4 @@
-// [PLAN]: Tối ưu Models, loại bỏ thuộc tính date khỏi ActiveLimit, giữ nguyên các cấu trúc dữ liệu cơ bản.
+// [PLAN]: Tối ưu Models, trang bị Constructor cho ActiveLimit chuẩn OOP, hỗ trợ Move Semantics để tối ưu bộ nhớ.
 #ifndef MODELS_H
 #define MODELS_H
 #include <string>
@@ -29,6 +29,9 @@ struct ActiveLimit
     int type;
     std::string name;
     int timeLimit;
+
+    ActiveLimit() = default;
+    ActiveLimit(int t, std::string n, int tl) : type(t), name(std::move(n)), timeLimit(tl) {}
 };
 
 #endif

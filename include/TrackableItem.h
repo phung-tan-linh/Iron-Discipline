@@ -1,4 +1,4 @@
-// [PLAN]: Định nghĩa giao diện TrackableItem, loại bỏ sharedIdentifier, thêm nameLower để cache và enforceBlock để thể hiện đa hình.
+// [PLAN]: Định nghĩa giao diện TrackableItem, loại bỏ cờ cảnh báo, thêm checkAndEnforce để ủy quyền logic xử lý cho lớp con.
 #ifndef TRACKABLE_ITEM_H
 #define TRACKABLE_ITEM_H
 #include <string>
@@ -13,8 +13,6 @@ protected:
     int timeLimitMinutes;
     int timeUsedMinutes;
     int timeUsedSeconds;
-    bool isFirstWarningShown;
-    bool isSecondWarningShown;
 
 public:
     TrackableItem(std::string itemName, int limitMinutes);
@@ -25,11 +23,6 @@ public:
     int getTimeLimit() const;
     int getTimeUsed() const;
     
-    bool getIsFirstWarningShown() const;
-    void setFirstWarningShown(bool status);
-    bool getIsSecondWarningShown() const;
-    void setSecondWarningShown(bool status);
-    
     void addTimeUsed(int minutes);
     void addTimeUsedSeconds(int seconds);
     int getTimeUsedSeconds() const;
@@ -38,6 +31,6 @@ public:
     
     virtual void displayInfo() const = 0;
     virtual std::string getType() const = 0;
-    virtual void enforceBlock(HWND hwnd, DWORD pid) = 0;
+    virtual void checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes) = 0;
 };
 #endif

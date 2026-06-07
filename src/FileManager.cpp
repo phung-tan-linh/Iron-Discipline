@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai an toàn luồng (Thread-safe) cho RAM Buffer bằng std::mutex. Tách biệt hoàn toàn việc update số liệu (trên RAM) và việc đồng bộ file (xuống đĩa). Loại bỏ date khỏi ActiveLimit.
+// [PLAN]: Triển khai an toàn luồng (Thread-safe) cho RAM Buffer bằng std::mutex. Lọc dữ liệu thô (chỉ lưu time > 0) trước khi ghi xuống đĩa.
 #include "../include/FileManager.h"
 #include "../include/InputValidator.h"
 #include <fstream>
@@ -159,7 +159,12 @@ void FileManager::saveAllDailyUsage(const std::map<std::string, int> &usageCache
     if (f.is_open())
     {
         for (const auto &p : usageCache)
-            f << t << "," << p.first << "," << p.second << "\n";
+        {
+            if (p.second > 0)
+            {
+                f << t << "," << p.first << "," << p.second << "\n";
+            }
+        }
         f.close();
         remove("daily_usage.csv");
         rename("daily_usage_temp.csv", "daily_usage.csv");

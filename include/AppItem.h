@@ -1,14 +1,19 @@
-// [PLAN]: Khai báo lớp AppItem kế thừa TrackableItem, ghi đè hàm enforceBlock để xử lý chặn ứng dụng.
+// [PLAN]: Khai báo AppItem kế thừa TrackableItem, thêm executablePath và cờ cảnh báo, ghi đè checkAndEnforce.
 #ifndef APP_ITEM_H
 #define APP_ITEM_H
 #include "TrackableItem.h"
 
 class AppItem : public TrackableItem
 {
+private:
+    std::string executablePath;
+    bool isFirstWarningShown;
+    bool isSecondWarningShown;
+
 public:
-    AppItem(std::string appName, int limitMinutes);
+    AppItem(std::string appName, int limitMinutes, std::string execPath = "");
     void displayInfo() const override;
     std::string getType() const override;
-    void enforceBlock(HWND hwnd, DWORD pid) override;
+    void checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes) override;
 };
 #endif

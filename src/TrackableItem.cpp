@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai TrackableItem với logic Heuristic để tránh lặp state cảnh báo và tạm dừng đếm giờ khi có Overlay thông báo (thông qua g_WarningActive). Khởi tạo cache chuỗi chữ thường.
+// [PLAN]: Triển khai TrackableItem, loại bỏ logic cờ cảnh báo, giữ nguyên logic đếm thời gian và cache chuỗi chữ thường.
 #include "../include/TrackableItem.h"
 #include <atomic>
 #include <algorithm>
@@ -15,20 +15,12 @@ TrackableItem::TrackableItem(std::string itemName, int limitMinutes)
     this->timeLimitMinutes = limitMinutes;
     this->timeUsedMinutes = 0;
     this->timeUsedSeconds = 0;
-    this->isFirstWarningShown = false;
-    this->isSecondWarningShown = false;
 }
 
 std::string TrackableItem::getName() const { return name; }
 std::string TrackableItem::getNameLower() const { return nameLower; }
 int TrackableItem::getTimeLimit() const { return timeLimitMinutes; }
 int TrackableItem::getTimeUsed() const { return timeUsedMinutes; }
-
-bool TrackableItem::getIsFirstWarningShown() const { return isFirstWarningShown; }
-void TrackableItem::setFirstWarningShown(bool status) { isFirstWarningShown = status; }
-
-bool TrackableItem::getIsSecondWarningShown() const { return isSecondWarningShown; }
-void TrackableItem::setSecondWarningShown(bool status) { isSecondWarningShown = status; }
 
 void TrackableItem::addTimeUsed(int minutes)
 {
@@ -55,11 +47,6 @@ void TrackableItem::setTimeUsedSeconds(int seconds)
     {
         timeUsedSeconds = seconds;
         timeUsedMinutes = timeUsedSeconds / 60;
-        
-        if (timeUsedMinutes >= timeLimitMinutes - 5)
-        {
-            isFirstWarningShown = true;
-        }
     }
 }
 
