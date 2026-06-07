@@ -1,18 +1,18 @@
 // [PLAN]: Triển khai UI Console, sửa lỗi Compiler khởi tạo struct. Tối ưu Disk I/O bằng cách gom nhóm ghi/đọc (chỉ reload 1 lần sau vòng lặp) và lọc timeMins > 0.
 #include "../include/ConsoleMenu.h"
-#include "../include/FileManager.h"
+#include "../include/DataStore.h"
 #include "../include/InputValidator.h"
-#include "../include/ProcessManager.h"
+#include "../include/TrackingEngine.h"
 #include <iostream>
 #include <iomanip>
 #include <map>
 #include <algorithm>
 
-extern ProcessManager g_ProcMgr;
+extern TimeEnforcer g_Engine;
 
 ConsoleMenu::ConsoleMenu() : currentState(AppState::MAIN_MENU) {}
 
-void ConsoleMenu::init(const std::string &basicListFile) { FileManager::loadBasicList(basicListFile, basicList); }
+void ConsoleMenu::init(const std::string &basicListFile) { UsageRepository::loadBasicList(basicListFile, basicList); }
 
 void ConsoleMenu::clearScreen() { system("cls"); }
 
@@ -176,12 +176,12 @@ void ConsoleMenu::showAddBasicLimit()
                         {
                             if (item.id == id)
                             {
-                                FileManager::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
+                                UsageRepository::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
                             }
                         }
                     }
                 }
-                g_ProcMgr.reloadActiveLimits();
+                g_Engine.reloadLimits();
             }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
             safeWait();
@@ -240,9 +240,9 @@ void ConsoleMenu::handleCustomOuterList()
             {
                 for (const auto &name : customNames)
                 {
-                    FileManager::addOrUpdateActiveLimit(ActiveLimit(2, name, timeMins));
+                    UsageRepository::addOrUpdateActiveLimit(ActiveLimit(2, name, timeMins));
                 }
-                g_ProcMgr.reloadActiveLimits();
+                g_Engine.reloadLimits();
             }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
             safeWait();
@@ -265,7 +265,7 @@ void ConsoleMenu::handleCustomBasicList()
     {
         clearScreen();
         printBasicList();
-        std::cout << " - Muon them gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon them gioi han tat ca thi an 'a'.\n - Muon quay lai menu Gioi han ung dung thi an 'n'.\n-> ";
+        std::cout << "\n - Muon them gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon them gioi han tat ca thi an 'a'.\n - Muon quay lai menu Gioi han ung dung thi an 'n'.\n-> ";
         
         int failCountInput = 0;
         std::vector<int> selectedIds;
@@ -294,7 +294,7 @@ void ConsoleMenu::handleCustomBasicList()
             if (selectedIds.empty())
             {
                 failCountInput++;
-                std::cout << "Du lieu khong hop le. Yeu cau nhap lai:\n-> ";
+                std::cout << "\nDu lieu khong hop le. Yeu cau nhap lai:\n-> ";
                 continue;
             }
             
@@ -311,7 +311,7 @@ void ConsoleMenu::handleCustomBasicList()
             if (!allValid)
             {
                 failCountInput++;
-                std::cout << "Du lieu khong hop le. Yeu cau nhap lai:\n-> ";
+                std::cout << "\nDu lieu khong hop le. Yeu cau nhap lai:\n-> ";
                 selectedIds.clear();
             }
             else
@@ -351,15 +351,15 @@ void ConsoleMenu::handleCustomBasicList()
                         {
                             if (item.id == id)
                             {
-                                FileManager::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
+                                UsageRepository::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
                             }
                         }
                     }
                 }
-                g_ProcMgr.reloadActiveLimits();
+                g_Engine.reloadLimits();
             }
                         
-            std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n - Muon them gioi han app/web ngoai danh sach thi an 'y'.\nMuon quay lai menu Gioi han ung dung thi an 'n'.\nChon? [y/n] : ";
+            std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n - Muon them gioi han app/web ngoai danh sach thi an 'y'.\n - Muon quay lai menu Gioi han ung dung thi an 'n'.\nChon? [y/n] : ";
             std::string afterConf;
             std::getline(std::cin, afterConf);
             
@@ -410,7 +410,7 @@ void ConsoleMenu::handleRemoveLimitLogic()
 {
     while (true)
     {
-        auto allLimits = FileManager::getActiveLimits();
+        auto allLimits = UsageRepository::getActiveLimits();
         std::vector<ActiveLimit> basicLimits, customLimits;
         for (const auto &limit : allLimits)
         {
@@ -472,7 +472,7 @@ void ConsoleMenu::handleRemoveLimitLogic()
             {
                 failCountRemove++;
                 if (failCountRemove < 3)
-                    std::cout << "Du lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
+                    std::cout << "\nDu lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
                 continue;
             }
             
@@ -490,7 +490,7 @@ void ConsoleMenu::handleRemoveLimitLogic()
             {
                 failCountRemove++;
                 if (failCountRemove < 3)
-                    std::cout << "Du lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
+                    std::cout << "\nDu lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
                 idsToRemove.clear();
             }
             else
@@ -522,8 +522,8 @@ void ConsoleMenu::handleRemoveLimitLogic()
                 }
             }
                     
-            FileManager::saveAllActiveLimits(limitsToKeep);
-            g_ProcMgr.reloadActiveLimits();
+            UsageRepository::saveAllActiveLimits(limitsToKeep);
+            g_Engine.reloadLimits();
             std::cout << "\nDa bo gioi han thanh cong " << targetStr << ".\n";
             safeWait();
             currentState = AppState::LIMIT_APP;
@@ -542,7 +542,7 @@ void ConsoleMenu::handleRemoveLimitLogic()
 void ConsoleMenu::showLimitApp()
 {
     clearScreen();
-    std::cout << "* Gioi han ung dung:\n1. Them gioi han co ban.\n2. Them gioi han tuy chon.\n3. Bo gioi han.\n4. Quay lai.\nChon? [1/2/3/4] : ";
+    std::cout << "* Gioi han ung dung:\n1. Them gioi han co ban.\n2. Them gioi han tuy chon.\n3. Bo gioi han.\nChon? [1/2/3] : ";
     std::string choice;
     std::getline(std::cin, choice);
     if (choice == "1")
@@ -551,8 +551,6 @@ void ConsoleMenu::showLimitApp()
         showAddCustomLimit();
     else if (choice == "3")
         handleRemoveLimitLogic();
-    else if (choice == "4")
-        currentState = AppState::MAIN_MENU;
     else
         handleInvalidState();
 }

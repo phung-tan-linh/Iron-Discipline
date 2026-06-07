@@ -1,4 +1,4 @@
-// [PLAN]: Khởi chạy UIManager ngay từ đầu cùng với ProcessManager. Thay thế cờ boolean cũ bằng cờ int để tích hợp các mức cảnh báo.
+// [PLAN]: Tích hợp TrackingEngine mới thay cho ProcessManager. Tạo lớp SystemSetup sử dụng Task Scheduler (schtasks) để tự động khởi chạy ngầm với quyền Admin (vượt UAC) thay cho Registry cũ. Loại bỏ các hàm lưu dữ liệu thủ công do đã có Append-Only Log.
 #ifndef UNICODE
 #define UNICODE
 #define _UNICODE
@@ -8,19 +8,37 @@
 #include <shellapi.h>
 #include <atomic>
 #include <thread>
+#include <string>
+#include <cstdlib>
 #include "../include/ConsoleMenu.h"
 #include "../include/UIManager.h"
-#include "../include/ProcessManager.h"
+#include "../include/TrackingEngine.h"
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_ACTIVATE_OLD_INSTANCE (WM_USER + 2)
 
 extern std::atomic<int> g_WarningActive;
 
-ProcessManager g_ProcMgr;
+TimeEnforcer g_Engine;
 std::atomic<bool> isConsoleOpen(false);
 const wchar_t CLASS_NAME[] = L"IronDisciplineHiddenWindow";
 HHOOK g_hKeyboardHook = NULL;
+
+class SystemSetup
+{
+public:
+    static void InstallTaskScheduler()
+    {
+        char szPathToExe[MAX_PATH];
+        if (GetModuleFileNameA(NULL, szPathToExe, MAX_PATH))
+        {
+            std::string cmd = "schtasks /create /tn \"IronDiscipline\" /tr \"\\\"";
+            cmd += szPathToExe;
+            cmd += "\\\"\" /sc onlogon /rl highest /f";
+            system(cmd.c_str());
+        }
+    }
+};
 
 BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType)
 {
@@ -30,7 +48,6 @@ BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType)
     case CTRL_BREAK_EVENT:
         return TRUE;
     case CTRL_CLOSE_EVENT:
-        g_ProcMgr.forceSaveData();
         return TRUE;
     default:
         return FALSE;
@@ -64,19 +81,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         }
     }
     return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
-}
-
-void EnableAutoStart()
-{
-    HKEY hKey;
-    const wchar_t *czStartName = L"IronDisciplineApp";
-    wchar_t szPathToExe[MAX_PATH];
-    GetModuleFileNameW(NULL, szPathToExe, MAX_PATH);
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
-    {
-        RegSetValueExW(hKey, czStartName, 0, REG_SZ, (const BYTE *)szPathToExe, (wcslen(szPathToExe) + 1) * sizeof(wchar_t));
-        RegCloseKey(hKey);
-    }
 }
 
 void RunConsoleWorker()
@@ -155,7 +159,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         break;
     case WM_DESTROY:
-        g_ProcMgr.forceSaveData();
         PostQuitMessage(0);
         break;
     default:
@@ -183,9 +186,10 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
     
     UIManager::Init();
     
-    std::thread([]() { g_ProcMgr.monitorAndBlock(); }).detach();
+    SystemSetup::InstallTaskScheduler();
     
-    EnableAutoStart();
+    std::thread([]() { g_Engine.monitorAndBlock(); }).detach();
+    
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
