@@ -11,10 +11,8 @@
 
 class FileManager {
 private:
-    static bool isOlderThan14Days(const std::string &dateStr);
     static std::string trim(const std::string &str);
     static std::vector<std::vector<std::string>> readCSV(const std::string &filename);
-    static std::string standardizeDate(const std::string &dateStr);
     
 public:
     static std::map<std::string, int> g_dailyUsageCache;
@@ -28,7 +26,7 @@ public:
     static std::map<std::string, int> loadDailyUsage();
     static void saveAllDailyUsage(const std::map<std::string, int>& usageCache);
     
-    static void updateDailyUsageItem(const std::string& id, int seconds);
+    static void updateDailyUsageItem(const std::string& name, int seconds);
     static void syncDailyUsageToFile();
 };
 #endif

@@ -1,14 +1,15 @@
-// [PLAN]: Định nghĩa giao diện TrackableItem, chuẩn hóa biến thành viên và hàm getter/setter.
+// [PLAN]: Định nghĩa giao diện TrackableItem, loại bỏ sharedIdentifier, thêm nameLower để cache và enforceBlock để thể hiện đa hình.
 #ifndef TRACKABLE_ITEM_H
 #define TRACKABLE_ITEM_H
 #include <string>
 #include <iostream>
+#include <windows.h>
 
 class TrackableItem
 {
 protected:
     std::string name;
-    std::string sharedIdentifier;
+    std::string nameLower;
     int timeLimitMinutes;
     int timeUsedMinutes;
     int timeUsedSeconds;
@@ -16,11 +17,11 @@ protected:
     bool isSecondWarningShown;
 
 public:
-    TrackableItem(std::string itemName, int limitMinutes, std::string identifier = "");
+    TrackableItem(std::string itemName, int limitMinutes);
     virtual ~TrackableItem() = default;
     
     std::string getName() const;
-    std::string getSharedIdentifier() const;
+    std::string getNameLower() const;
     int getTimeLimit() const;
     int getTimeUsed() const;
     
@@ -37,5 +38,6 @@ public:
     
     virtual void displayInfo() const = 0;
     virtual std::string getType() const = 0;
+    virtual void enforceBlock(HWND hwnd, DWORD pid) = 0;
 };
 #endif

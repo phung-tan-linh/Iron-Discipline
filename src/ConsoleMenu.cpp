@@ -171,7 +171,7 @@ void ConsoleMenu::showAddBasicLimit()
                     for (const auto &item : cat.items)
                         if (item.id == id)
                         {
-                            FileManager::addOrUpdateActiveLimit({getCurrentDate(), 1, item.name, timeMins});
+                            FileManager::addOrUpdateActiveLimit({1, item.name, timeMins});
                             g_ProcMgr.reloadActiveLimits();
                         }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
@@ -229,7 +229,7 @@ void ConsoleMenu::handleCustomOuterList()
         {
             for (const auto &name : customNames)
             {
-                FileManager::addOrUpdateActiveLimit({getCurrentDate(), 2, name, timeMins});
+                FileManager::addOrUpdateActiveLimit({2, name, timeMins});
                 g_ProcMgr.reloadActiveLimits();
             }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
@@ -334,7 +334,7 @@ void ConsoleMenu::handleCustomBasicList()
                     for (const auto &item : cat.items)
                         if (item.id == id)
                         {
-                            FileManager::addOrUpdateActiveLimit({getCurrentDate(), 1, item.name, timeMins});
+                            FileManager::addOrUpdateActiveLimit({1, item.name, timeMins});
                             g_ProcMgr.reloadActiveLimits();
                         }
                         

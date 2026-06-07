@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai MsgWaitForMultipleObjects để tối ưu vòng lặp. Gọi syncDailyUsageToFile mỗi 5 phút. Xóa bỏ Sleep và MessageBox chặn luồng.
+// [PLAN]: Triển khai MsgWaitForMultipleObjects để tối ưu vòng lặp. Gọi syncDailyUsageToFile mỗi 5 phút. Xóa bỏ Sleep và MessageBox chặn luồng. Tối ưu so sánh chuỗi và đa hình enforceBlock.
 #include "../include/ProcessManager.h"
 #include "../include/FileManager.h"
 #include "../include/UIManager.h"
@@ -28,9 +28,12 @@ void ProcessManager::forceSaveData()
 {
     for (TrackableItem *item : trackingList)
     {
-        FileManager::updateDailyUsageItem(item->getSharedIdentifier(), item->getTimeUsedSeconds());
+        if (item->getTimeUsedSeconds() > 0)
+        {
+            FileManager::updateDailyUsageItem(item->getName(), item->getTimeUsedSeconds());
+        }
     }
-    FileManager::syncDailyUsageToFile();
+    std::thread([]() { FileManager::syncDailyUsageToFile(); }).detach();
 }
 
 std::string ProcessManager::getActiveWindowTitle(HWND hwnd)
@@ -60,49 +63,19 @@ std::string ProcessManager::getActiveProcessName(DWORD pid)
     return processName;
 }
 
-void ProcessManager::killAppProcess(DWORD pid)
+bool ProcessManager::isAppMatch(const std::string &nameLower, const std::string &processName)
 {
-    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-    if (hProcess != NULL)
-    {
-        TerminateProcess(hProcess, 0);
-        CloseHandle(hProcess);
-        std::cout << "[SYSTEM] Da ep dong App (PID: " << pid << ").\n";
-    }
+    std::string pLower = processName;
+    std::transform(pLower.begin(), pLower.end(), pLower.begin(), [](unsigned char c) { return std::tolower(c); });
+    return pLower.find(nameLower) != std::string::npos;
 }
 
-void ProcessManager::closeBrowserTab(HWND hwnd)
+bool ProcessManager::isWebsiteMatch(const std::string &nameLower, const std::string &windowTitle)
 {
-    SetForegroundWindow(hwnd);
-    if (hwnd == GetForegroundWindow())
-    {
-        INPUT inputs[4] = {};
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].ki.wVk = VK_CONTROL;
-        inputs[1].type = INPUT_KEYBOARD;
-        inputs[1].ki.wVk = 'W';
-        inputs[2].type = INPUT_KEYBOARD;
-        inputs[2].ki.wVk = 'W';
-        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        inputs[3].type = INPUT_KEYBOARD;
-        inputs[3].ki.wVk = VK_CONTROL;
-        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(4, inputs, sizeof(INPUT));
-    }
-    std::cout << "[SYSTEM] Da dong tab trinh duyet.\n";
+    std::string wLower = windowTitle;
+    std::transform(wLower.begin(), wLower.end(), wLower.begin(), [](unsigned char c) { return std::tolower(c); });
+    return wLower.find(nameLower) != std::string::npos;
 }
-
-std::string ProcessManager::toLowerCase(const std::string &str)
-{
-    std::string lowerStr = str;
-    std::transform(lowerStr.begin(), lowerStr.end(), lowerStr.begin(), [](unsigned char c)
-                   { return std::tolower(c); });
-    return lowerStr;
-}
-
-bool ProcessManager::isAppMatch(const std::string &appName, const std::string &processName) { return toLowerCase(processName).find(toLowerCase(appName)) != std::string::npos; }
-
-bool ProcessManager::isWebsiteMatch(const std::string &url, const std::string &windowTitle) { return toLowerCase(windowTitle).find(toLowerCase(url)) != std::string::npos; }
 
 void ProcessManager::reloadActiveLimits() { g_currentLimits = FileManager::getActiveLimits(); }
 
@@ -127,7 +100,10 @@ void ProcessManager::monitorAndBlock()
                 }
             if (!found)
             {
-                FileManager::updateDailyUsageItem((*it)->getSharedIdentifier(), (*it)->getTimeUsedSeconds());
+                if ((*it)->getTimeUsedSeconds() > 0)
+                {
+                    FileManager::updateDailyUsageItem((*it)->getName(), (*it)->getTimeUsedSeconds());
+                }
                 delete *it;
                 it = trackingList.erase(it);
             }
@@ -155,8 +131,8 @@ void ProcessManager::monitorAndBlock()
                 int savedSecs = 0;
                 {
                     std::lock_guard<std::mutex> lock(FileManager::g_usageMutex);
-                    if (FileManager::g_dailyUsageCache.find(newItem->getSharedIdentifier()) != FileManager::g_dailyUsageCache.end())
-                        savedSecs = FileManager::g_dailyUsageCache[newItem->getSharedIdentifier()];
+                    if (FileManager::g_dailyUsageCache.find(newItem->getName()) != FileManager::g_dailyUsageCache.end())
+                        savedSecs = FileManager::g_dailyUsageCache[newItem->getName()];
                 }
                 
                 newItem->setTimeUsedSeconds(savedSecs);
@@ -187,12 +163,12 @@ void ProcessManager::monitorAndBlock()
             
             for (auto *i : trackingList)
             {
-                if ((i->getType() == "Application" && isAppMatch(i->getName(), r)) || (i->getType() == "Website" && isWebsiteMatch(i->getName(), w)))
+                if ((i->getType() == "Application" && isAppMatch(i->getNameLower(), r)) || (i->getType() == "Website" && isWebsiteMatch(i->getNameLower(), w)))
                 {
                     i->addTimeUsedSeconds(1);
                     activeItem = i;
                     
-                    FileManager::updateDailyUsageItem(i->getSharedIdentifier(), i->getTimeUsedSeconds());
+                    FileManager::updateDailyUsageItem(i->getName(), i->getTimeUsedSeconds());
 
                     int m = i->getTimeLimit();
                     for (auto &x : g_currentLimits)
@@ -206,13 +182,12 @@ void ProcessManager::monitorAndBlock()
                     
                     if (u >= m)
                     {
-                        if (i->getType() == "Website")
-                            closeBrowserTab(h);
-                        else
-                            killAppProcess(p);
-                            
-                        i->setSecondWarningShown(true);
-                        UIManager::ShowWarning(2);
+                        if (!i->getIsSecondWarningShown())
+                        {
+                            i->enforceBlock(h, p);
+                            UIManager::ShowWarning(2);
+                            i->setSecondWarningShown(true);
+                        }
                     }
                     else if (u >= m - 5 && !i->getIsFirstWarningShown())
                     {

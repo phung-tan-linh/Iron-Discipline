@@ -1,13 +1,17 @@
-// [PLAN]: Triển khai TrackableItem với logic Heuristic để tránh lặp state cảnh báo và tạm dừng đếm giờ khi có Overlay thông báo (thông qua g_WarningActive).
+// [PLAN]: Triển khai TrackableItem với logic Heuristic để tránh lặp state cảnh báo và tạm dừng đếm giờ khi có Overlay thông báo (thông qua g_WarningActive). Khởi tạo cache chuỗi chữ thường.
 #include "../include/TrackableItem.h"
 #include <atomic>
+#include <algorithm>
+#include <cctype>
 
 extern std::atomic<int> g_WarningActive;
 
-TrackableItem::TrackableItem(std::string itemName, int limitMinutes, std::string identifier)
+TrackableItem::TrackableItem(std::string itemName, int limitMinutes)
 {
     this->name = itemName;
-    this->sharedIdentifier = identifier.empty() ? itemName : identifier;
+    this->nameLower = itemName;
+    std::transform(this->nameLower.begin(), this->nameLower.end(), this->nameLower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
     this->timeLimitMinutes = limitMinutes;
     this->timeUsedMinutes = 0;
     this->timeUsedSeconds = 0;
@@ -16,7 +20,7 @@ TrackableItem::TrackableItem(std::string itemName, int limitMinutes, std::string
 }
 
 std::string TrackableItem::getName() const { return name; }
-std::string TrackableItem::getSharedIdentifier() const { return sharedIdentifier; }
+std::string TrackableItem::getNameLower() const { return nameLower; }
 int TrackableItem::getTimeLimit() const { return timeLimitMinutes; }
 int TrackableItem::getTimeUsed() const { return timeUsedMinutes; }
 

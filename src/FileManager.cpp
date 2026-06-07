@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai an toàn luồng (Thread-safe) cho RAM Buffer bằng std::mutex. Tách biệt hoàn toàn việc update số liệu (trên RAM) và việc đồng bộ file (xuống đĩa).
+// [PLAN]: Triển khai an toàn luồng (Thread-safe) cho RAM Buffer bằng std::mutex. Tách biệt hoàn toàn việc update số liệu (trên RAM) và việc đồng bộ file (xuống đĩa). Loại bỏ date khỏi ActiveLimit.
 #include "../include/FileManager.h"
 #include "../include/InputValidator.h"
 #include <fstream>
@@ -11,36 +11,6 @@
 
 std::map<std::string, int> FileManager::g_dailyUsageCache;
 std::mutex FileManager::g_usageMutex;
-
-std::string FileManager::standardizeDate(const std::string &dateStr)
-{
-    std::string result = trim(dateStr);
-    for (char &c : result)
-        if (c == '/' || c == '.')
-            c = '-';
-    return result;
-}
-
-bool FileManager::isOlderThan14Days(const std::string &dateStr)
-{
-    std::string cleanDate = standardizeDate(dateStr);
-    std::stringstream ss(cleanDate);
-    int d = 0, m = 0, y = 0;
-    char sep1, sep2;
-    if (ss >> d >> sep1 >> m >> sep2 >> y)
-    {
-        std::tm tm_info = {};
-        tm_info.tm_mday = d;
-        tm_info.tm_mon = m - 1;
-        tm_info.tm_year = (y < 100) ? (y + 100) : (y - 1900);
-        std::time_t fileTime = std::mktime(&tm_info);
-        std::time_t now = std::time(nullptr);
-        if (fileTime == -1)
-            return false;
-        return std::difftime(now, fileTime) > (14 * 24 * 60 * 60);
-    }
-    return false;
-}
 
 std::string FileManager::trim(const std::string &str)
 {
@@ -104,18 +74,13 @@ std::vector<ActiveLimit> FileManager::getActiveLimits()
 {
     std::vector<ActiveLimit> limits;
     auto csvData = readCSV("active_limits.csv");
-    bool needsCleanup = false;
     for (const auto &row : csvData)
-        if (row.size() >= 4)
+    {
+        if (row.size() >= 3)
         {
-            std::string date = standardizeDate(row[0]);
-            if (isOlderThan14Days(date))
-                needsCleanup = true;
-            else
-                limits.push_back({date, std::stoi(row[1]), row[2], std::stoi(row[3])});
+            limits.push_back({std::stoi(row[0]), row[1], std::stoi(row[2])});
         }
-    if (needsCleanup)
-        saveAllActiveLimits(limits);
+    }
     return limits;
 }
 
@@ -125,7 +90,7 @@ void FileManager::saveAllActiveLimits(const std::vector<ActiveLimit> &limits)
     if (outFile.is_open())
     {
         for (const auto &l : limits)
-            outFile << standardizeDate(l.date) << "," << l.type << "," << l.name << "," << l.timeLimit << "\n";
+            outFile << l.type << "," << l.name << "," << l.timeLimit << "\n";
         outFile.close();
     }
 }
@@ -201,10 +166,10 @@ void FileManager::saveAllDailyUsage(const std::map<std::string, int> &usageCache
     }
 }
 
-void FileManager::updateDailyUsageItem(const std::string& id, int seconds)
+void FileManager::updateDailyUsageItem(const std::string& name, int seconds)
 {
     std::lock_guard<std::mutex> lock(g_usageMutex);
-    g_dailyUsageCache[id] = seconds;
+    g_dailyUsageCache[name] = seconds;
 }
 
 void FileManager::syncDailyUsageToFile()

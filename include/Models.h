@@ -1,4 +1,4 @@
-// [PLAN]: Tối ưu Models, loại bỏ hoàn toàn các cấu trúc dữ liệu liên quan đến Analytics (VIEW_ACTIVITY, HistoryLog).
+// [PLAN]: Tối ưu Models, loại bỏ thuộc tính date khỏi ActiveLimit, giữ nguyên các cấu trúc dữ liệu cơ bản.
 #ifndef MODELS_H
 #define MODELS_H
 #include <string>
@@ -26,7 +26,6 @@ struct Category
 
 struct ActiveLimit
 {
-    std::string date;
     int type;
     std::string name;
     int timeLimit;
