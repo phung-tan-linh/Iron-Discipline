@@ -53,7 +53,7 @@ void ConsoleMenu::printBasicList()
     {
         std::cout << cat.romanID << ". " << cat.title << ": \n";
         for (const auto &item : cat.items)
-            std::cout << item.id << ". " << item.name << ".\n";
+            std::cout << item.id << ". " << item.name << "\n";
         std::cout << "\n";
     }
 }
@@ -145,7 +145,7 @@ void ConsoleMenu::handleCustomOuterList()
     while (true)
     {
         clearScreen();
-        std::cout << " - Muon them gioi han app/web ngoai danh sach co ban thi\nLiet ke cac app(.exe)/url/ten mien cach nhau boi dau cach.\nVi du: osu!.exe https://github.com/phung-tan-linh facebook.com\nAn 'n' de quay lai.\n-> ";
+        std::cout << " - Muon them gioi han app/web ngoai danh sach co ban thi\nLiet ke cac app(.exe)/url/ten mien cach nhau boi dau cach.\nVi du: Code.exe https://github.com/phung-tan-linh sv.dut.udn.vn\nAn 'n' de quay lai.\n-> ";
         
         bool isCancel = false;
         std::vector<std::string> customNames = InputValidator::getValidStringsInput(isCancel);
