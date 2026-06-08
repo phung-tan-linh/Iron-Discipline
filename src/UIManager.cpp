@@ -138,8 +138,8 @@ void UIManager::Init()
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL;
     
-    fBig = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 60.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
-    fSmall = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 30.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    fBig = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 64.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    fSmall = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 36.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
     
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
@@ -193,28 +193,51 @@ void UIManager::RenderOverlayLoop()
 
         if (!IsWindowVisible(hwnd))
         {
-            // Dùng SW_SHOWNOACTIVATE thay vì SW_SHOW để giữ nguyên Focus cho Game
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if (currentLevel == 1)
+            {
+                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            else if (currentLevel == 2)
+            {
+                LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+                exStyle &= ~WS_EX_NOACTIVATE;
+                SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
+                
+                ShowWindow(hwnd, SW_SHOW);
+                SetForegroundWindow(hwnd);
+            }
+        }
+        else if (currentLevel == 2)
+        {
+            if (GetForegroundWindow() != hwnd)
+            {
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                SetForegroundWindow(hwnd);
+            }
         }
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
         
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 10.0f);
-        ImGui::PushStyleColor(ImGuiCol_Border, currentLevel == 1 ? ImVec4(1, 1, 0, 1) : ImVec4(1, 0, 0, 1));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.85f));
+        ImGuiIO& io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(640, 360));
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+        
+        ImGui::PushStyleColor(ImGuiCol_Border, currentLevel == 1 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.08f, 0.95f));
         
         ImGui::Begin("W", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
         ImVec2 ws = ImGui::GetWindowSize();
         
         if (fBig) ImGui::PushFont(fBig);
         const char *tB = currentLevel == 1 ? u8"NHẮC NHỞ!" : u8"HẾT GIỜ!";
-        ImGui::PushStyleColor(ImGuiCol_Text, currentLevel == 1 ? ImVec4(1, 1, 0, 1) : ImVec4(1, 0, 0, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, currentLevel == 1 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
         ImVec2 tsB = ImGui::CalcTextSize(tB);
-        ImGui::SetCursorPos(ImVec2((ws.x - tsB.x) * 0.5f, ws.y * 0.2f));
+        ImGui::SetCursorPos(ImVec2((ws.x - tsB.x) * 0.5f, ws.y * 0.15f));
         ImGui::Text(tB);
         ImGui::PopStyleColor();
         if (fBig) ImGui::PopFont();
@@ -223,7 +246,7 @@ void UIManager::RenderOverlayLoop()
         const char *tS = currentLevel == 1 ? u8"Còn 5 phút nữa thôi. Hãy lưu lại tiến trình ngay đi!" : u8"Thì phải gì ạ? Thì phải... Phải chịu, đừng có kêu!";
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
         ImVec2 tsS = ImGui::CalcTextSize(tS);
-        ImGui::SetCursorPos(ImVec2((ws.x - tsS.x) * 0.5f, ws.y * 0.5f));
+        ImGui::SetCursorPos(ImVec2((ws.x - tsS.x) * 0.5f, ws.y * 0.42f));
         ImGui::Text(tS);
         ImGui::PopStyleColor();
         if (fSmall) ImGui::PopFont();
@@ -232,25 +255,46 @@ void UIManager::RenderOverlayLoop()
         {
             if (fSmall) ImGui::PushFont(fSmall);
             const char *btn = currentLevel == 1 ? u8"BIẾT RỒI" : u8"ĐÃ HIỂU";
-            ImVec2 bs(200, 60);
-            ImGui::SetCursorPos(ImVec2((ws.x - bs.x) * 0.5f, ws.y * 0.75f));
+            ImVec2 bs(200, 70);
+            ImGui::SetCursorPos(ImVec2((ws.x - bs.x) * 0.5f, ws.y * 0.68f));
+            
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+            
+            ImVec4 btnColor = currentLevel == 1 ? ImVec4(0.85f, 0.65f, 0.0f, 1.0f) : ImVec4(0.8f, 0.1f, 0.1f, 1.0f);
+            ImVec4 btnHover = currentLevel == 1 ? ImVec4(0.95f, 0.75f, 0.1f, 1.0f) : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+            ImVec4 btnActive = currentLevel == 1 ? ImVec4(0.75f, 0.55f, 0.0f, 1.0f) : ImVec4(0.7f, 0.0f, 0.0f, 1.0f);
+            
+            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btnHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, btnActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
             if (ImGui::Button(btn, bs))
             {
                 g_WarningActive = 0;
                 lastLevel = 0;
                 ShowWindow(hwnd, SW_HIDE);
+                
+                LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+                exStyle |= WS_EX_NOACTIVATE;
+                SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
+
                 if (g_AppHwndToRestore)
                 {
                     SetForegroundWindow(g_AppHwndToRestore);
                     g_AppHwndToRestore = NULL;
                 }
             }
+            
+            ImGui::PopStyleColor(4);
+            ImGui::PopStyleVar();
+            
             if (fSmall) ImGui::PopFont();
         }
         
         ImGui::End();
         ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
         ImGui::Render();
         
         const float cb[4] = {0.f, 0.f, 0.f, 0.f};
