@@ -1,4 +1,6 @@
-// [PLAN]: Gộp Models và FileManager thành DataStore. Áp dụng Append-Only Log để chống mất dữ liệu khi crash. Loại bỏ hoàn toàn TimePool, chuyển sang quản lý state trực tiếp tại các luồng/component cần thiết để giảm độ phức tạp và tránh rò rỉ bộ nhớ.
+// [PLAN]: Gộp Models và FileManager thành DataStore. Áp dụng Append-Only Log để chống mất dữ liệu khi crash.
+// Chuyển giao logic xử lý ID và danh sách từ ConsoleMenu sang UsageRepository (SRP).
+// Thêm các hàm addLimitsByBasicIds và removeLimitsByIds để ConsoleMenu chỉ lo UI.
 #ifndef DATASTORE_H
 #define DATASTORE_H
 
@@ -50,6 +52,9 @@ public:
     static std::vector<ActiveLimit> getActiveLimits();
     static void saveAllActiveLimits(const std::vector<ActiveLimit>& limits);
     static void addOrUpdateActiveLimit(const ActiveLimit& limit);
+
+    static void addLimitsByBasicIds(const std::vector<int>& ids, const std::vector<Category>& basicList, int timeMins);
+    static void removeLimitsByIds(const std::vector<int>& idsToRemove);
 
     static std::unordered_map<std::string, int> loadDailyUsage();
     static void appendUsageLog(const std::string& appName, int addedSeconds);

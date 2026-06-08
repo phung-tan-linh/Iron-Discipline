@@ -1,4 +1,6 @@
-// [PLAN]: Gộp AppItem, WebItem và TrackableItem. Áp dụng OOP Đa hình (Polymorphism) với hàm ảo checkAndEnforce. Loại bỏ TimePool, sử dụng biến timeUsedSeconds độc lập. Chuyển cờ cảnh báo lên lớp cơ sở và đồng bộ ngay khi khởi tạo để chống lỗi reset cảnh báo khi restart app.
+// [PLAN]: Gộp AppItem, WebItem và TrackableItem. Áp dụng OOP Đa hình (Polymorphism) với hàm ảo checkAndEnforce.
+// Loại bỏ TimePool, sử dụng biến timeUsedSeconds độc lập. Chuyển cờ cảnh báo lên lớp cơ sở.
+// Thêm biến lastClosedTime vào WebItem để hỗ trợ kỹ thuật Debounce chống lỗi Chain-Reaction Closing.
 #ifndef TRACKING_TARGETS_H
 #define TRACKING_TARGETS_H
 
@@ -53,6 +55,7 @@ class WebItem : public TrackableItem
 {
 private:
     std::string browserType;
+    DWORD lastClosedTime;
 
 public:
     WebItem(std::string url, int limitMinutes, int initialUsedSeconds = 0, std::string browser = "");

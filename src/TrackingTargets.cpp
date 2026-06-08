@@ -1,4 +1,6 @@
-// [PLAN]: Triển khai các lớp TrackingTargets. Quản lý thời gian độc lập trong từng object. Sử dụng WinAPI TerminateProcess cho App và SendInput (Ctrl+W) cho Web. Tự động đồng bộ cờ cảnh báo (syncWarningState) để tránh spam UI khi khởi động lại.
+// [PLAN]: Triển khai các lớp TrackingTargets. Quản lý thời gian độc lập trong từng object.
+// Sử dụng WinAPI TerminateProcess cho App và SendInput (Ctrl+W) cho Web.
+// Áp dụng Debounce (3000ms) trong WebItem::checkAndEnforce để ngăn lỗi dồn ứ hàng đợi SendInput.
 #include "../include/TrackingTargets.h"
 #include "../include/UIManager.h"
 #include <iostream>
@@ -89,7 +91,7 @@ void AppItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 // --- WebItem Implementation ---
 
 WebItem::WebItem(std::string url, int limitMinutes, int initialUsedSeconds, std::string browser)
-    : TrackableItem(std::move(url), limitMinutes, initialUsedSeconds), browserType(std::move(browser))
+    : TrackableItem(std::move(url), limitMinutes, initialUsedSeconds), browserType(std::move(browser)), lastClosedTime(0)
 {
 }
 
@@ -118,24 +120,29 @@ void WebItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
         
         if (hwnd)
         {
-            SetForegroundWindow(hwnd);
-            INPUT inputs[4] = {};
-            
-            inputs[0].type = INPUT_KEYBOARD;
-            inputs[0].ki.wVk = VK_CONTROL;
-            
-            inputs[1].type = INPUT_KEYBOARD;
-            inputs[1].ki.wVk = 'W';
-            
-            inputs[2].type = INPUT_KEYBOARD;
-            inputs[2].ki.wVk = 'W';
-            inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
-            
-            inputs[3].type = INPUT_KEYBOARD;
-            inputs[3].ki.wVk = VK_CONTROL;
-            inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
-            
-            SendInput(4, inputs, sizeof(INPUT));
+            if (GetTickCount() - lastClosedTime >= 3000)
+            {
+                SetForegroundWindow(hwnd);
+                INPUT inputs[4] = {};
+                
+                inputs[0].type = INPUT_KEYBOARD;
+                inputs[0].ki.wVk = VK_CONTROL;
+                
+                inputs[1].type = INPUT_KEYBOARD;
+                inputs[1].ki.wVk = 'W';
+                
+                inputs[2].type = INPUT_KEYBOARD;
+                inputs[2].ki.wVk = 'W';
+                inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+                
+                inputs[3].type = INPUT_KEYBOARD;
+                inputs[3].ki.wVk = VK_CONTROL;
+                inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+                
+                SendInput(4, inputs, sizeof(INPUT));
+                
+                lastClosedTime = GetTickCount();
+            }
         }
     }
     else if (timeLimitMinutes - currentMinutes <= 5)

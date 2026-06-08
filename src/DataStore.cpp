@@ -1,10 +1,13 @@
-// [PLAN]: Triển khai Append-Only Log ghi nối file CSV (std::ios::app). Ẩn logic parse CSV vào anonymous namespace (SRP). Đảm bảo Thread-safe bằng std::mutex khi I/O. Đã loại bỏ hoàn toàn TimePool theo yêu cầu.
+// [PLAN]: Triển khai Append-Only Log ghi nối file CSV (std::ios::app). Ẩn logic parse CSV vào anonymous namespace (SRP).
+// Bổ sung addLimitsByBasicIds và removeLimitsByIds để xử lý logic tìm kiếm/xóa limit theo ID hiển thị.
+// Đảm bảo Thread-safe bằng std::mutex khi I/O. Đã loại bỏ hoàn toàn TimePool theo yêu cầu.
 #include "../include/DataStore.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
 #include <filesystem>
+#include <algorithm>
 
 std::mutex UsageRepository::s_fileMutex;
 
@@ -122,6 +125,59 @@ void UsageRepository::addOrUpdateActiveLimit(const ActiveLimit& limit)
     if (!found)
         limits.push_back(limit);
     saveAllActiveLimits(limits);
+}
+
+void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, const std::vector<Category>& basicList, int timeMins)
+{
+    if (timeMins <= 0) return;
+    for (int id : ids)
+    {
+        for (const auto& cat : basicList)
+        {
+            for (const auto& item : cat.items)
+            {
+                if (item.id == id)
+                {
+                    addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
+                }
+            }
+        }
+    }
+}
+
+void UsageRepository::removeLimitsByIds(const std::vector<int>& idsToRemove)
+{
+    auto allLimits = getActiveLimits();
+    std::vector<ActiveLimit> basicLimits, customLimits;
+    for (const auto& limit : allLimits)
+    {
+        if (limit.type == 1)
+            basicLimits.push_back(limit);
+        else
+            customLimits.push_back(limit);
+    }
+    
+    auto sortAlpha = [](const ActiveLimit& a, const ActiveLimit& b)
+    { return a.name < b.name; };
+    
+    std::sort(basicLimits.begin(), basicLimits.end(), sortAlpha);
+    std::sort(customLimits.begin(), customLimits.end(), sortAlpha);
+    
+    std::vector<ActiveLimit> sortedLimits;
+    sortedLimits.insert(sortedLimits.end(), basicLimits.begin(), basicLimits.end());
+    sortedLimits.insert(sortedLimits.end(), customLimits.begin(), customLimits.end());
+    
+    std::vector<ActiveLimit> limitsToKeep;
+    for (size_t i = 0; i < sortedLimits.size(); ++i)
+    {
+        int displayId = static_cast<int>(i) + 1;
+        if (std::find(idsToRemove.begin(), idsToRemove.end(), displayId) == idsToRemove.end())
+        {
+            limitsToKeep.push_back(sortedLimits[i]);
+        }
+    }
+    
+    saveAllActiveLimits(limitsToKeep);
 }
 
 std::unordered_map<std::string, int> UsageRepository::loadDailyUsage()

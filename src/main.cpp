@@ -1,4 +1,6 @@
-// [PLAN]: Tích hợp TrackingEngine mới. Loại bỏ hoàn toàn Task Scheduler/Registry, dựa vào Manifest để xin quyền Admin. Quản lý Single Instance, Tray Icon và Console Worker an toàn.
+// [PLAN]: Tích hợp TrackingEngine, quản lý Single Instance, Tray Icon và Console Worker.
+// Thêm tính năng Auto-Start qua Registry (HKCU) để tự động chạy ngầm cùng Windows
+// bằng quyền User thường, loại bỏ hoàn toàn sự phụ thuộc vào quyền Admin (UAC).
 #ifndef UNICODE
 #define UNICODE
 #define _UNICODE
@@ -22,6 +24,23 @@ TimeEnforcer g_Engine;
 std::atomic<bool> isConsoleOpen(false);
 const wchar_t CLASS_NAME[] = L"IronDisciplineHiddenWindow";
 HHOOK g_hKeyboardHook = NULL;
+
+void RegisterAutoStart()
+{
+    WCHAR exePath[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exePath, MAX_PATH) == 0)
+    {
+        return;
+    }
+
+    HKEY hKey;
+    LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey);
+    if (status == ERROR_SUCCESS)
+    {
+        RegSetValueExW(hKey, L"IronDiscipline", 0, REG_SZ, (const BYTE*)exePath, (lstrlenW(exePath) + 1) * sizeof(WCHAR));
+        RegCloseKey(hKey);
+    }
+}
 
 BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType)
 {
@@ -166,6 +185,8 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
         CloseHandle(hMutex);
         return 0;
     }
+    
+    RegisterAutoStart();
     
     UIManager::Init();
     
