@@ -1,11 +1,9 @@
-// [PLAN]: Gộp AppItem, WebItem và TrackableItem. Áp dụng OOP Đa hình (Polymorphism) với hàm ảo checkAndEnforce. Tích hợp std::shared_ptr<TimePool> để chia sẻ quỹ thời gian chung giữa các tiến trình cùng nhóm, đảm bảo an toàn đa luồng bằng std::atomic.
+// [PLAN]: Gộp AppItem, WebItem và TrackableItem. Áp dụng OOP Đa hình (Polymorphism) với hàm ảo checkAndEnforce. Loại bỏ TimePool, sử dụng biến timeUsedSeconds độc lập. Chuyển cờ cảnh báo lên lớp cơ sở và đồng bộ ngay khi khởi tạo để chống lỗi reset cảnh báo khi restart app.
 #ifndef TRACKING_TARGETS_H
 #define TRACKING_TARGETS_H
 
 #include <string>
-#include <memory>
 #include <windows.h>
-#include "DataStore.h"
 
 class TrackableItem
 {
@@ -13,10 +11,12 @@ protected:
     std::string name;
     std::string nameLower;
     int timeLimitMinutes;
-    std::shared_ptr<TimePool> sharedPool;
+    int timeUsedSeconds;
+    bool isFirstWarningShown;
+    bool isSecondWarningShown;
 
 public:
-    TrackableItem(std::string itemName, int limitMinutes, std::shared_ptr<TimePool> pool);
+    TrackableItem(std::string itemName, int limitMinutes, int initialUsedSeconds = 0);
     virtual ~TrackableItem() = default;
     
     std::string getName() const;
@@ -30,6 +30,8 @@ public:
     void setTimeUsedSeconds(int seconds);
     bool isTimeUp() const;
     
+    void syncWarningState(int currentUsedMinutes);
+
     virtual void displayInfo() const = 0;
     virtual std::string getType() const = 0;
     virtual void checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes) = 0;
@@ -39,11 +41,9 @@ class AppItem : public TrackableItem
 {
 private:
     std::string executablePath;
-    bool isFirstWarningShown;
-    bool isSecondWarningShown;
 
 public:
-    AppItem(std::string appName, int limitMinutes, std::shared_ptr<TimePool> pool, std::string execPath = "");
+    AppItem(std::string appName, int limitMinutes, int initialUsedSeconds = 0, std::string execPath = "");
     void displayInfo() const override;
     std::string getType() const override;
     void checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes) override;
@@ -53,11 +53,9 @@ class WebItem : public TrackableItem
 {
 private:
     std::string browserType;
-    bool isFirstWarningShown;
-    bool isSecondWarningShown;
 
 public:
-    WebItem(std::string url, int limitMinutes, std::shared_ptr<TimePool> pool, std::string browser = "");
+    WebItem(std::string url, int limitMinutes, int initialUsedSeconds = 0, std::string browser = "");
     void displayInfo() const override;
     std::string getType() const override;
     void checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes) override;

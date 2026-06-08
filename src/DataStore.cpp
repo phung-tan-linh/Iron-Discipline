@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai Append-Only Log ghi nối file CSV (std::ios::app). Ẩn logic parse CSV vào anonymous namespace (SRP). Đảm bảo Thread-safe bằng std::mutex khi I/O và khi truy xuất TimePool.
+// [PLAN]: Triển khai Append-Only Log ghi nối file CSV (std::ios::app). Ẩn logic parse CSV vào anonymous namespace (SRP). Đảm bảo Thread-safe bằng std::mutex khi I/O. Đã loại bỏ hoàn toàn TimePool theo yêu cầu.
 #include "../include/DataStore.h"
 #include <fstream>
 #include <sstream>
@@ -7,8 +7,6 @@
 #include <filesystem>
 
 std::mutex UsageRepository::s_fileMutex;
-std::mutex UsageRepository::s_poolMutex;
-std::unordered_map<std::string, std::shared_ptr<TimePool>> UsageRepository::s_timePools;
 
 namespace
 {
@@ -139,8 +137,6 @@ std::unordered_map<std::string, int> UsageRepository::loadDailyUsage()
     if (isOldData)
     {
         std::ofstream outFile("daily_usage.csv", std::ios::trunc);
-        std::lock_guard<std::mutex> poolLock(s_poolMutex);
-        s_timePools.clear();
         return aggregatedUsage;
     }
 
@@ -148,53 +144,25 @@ std::unordered_map<std::string, int> UsageRepository::loadDailyUsage()
     {
         if (row.size() >= 3)
         {
-            std::string groupName = row[1];
+            std::string appName = row[1];
             int addedSeconds = std::stoi(row[2]);
-            aggregatedUsage[groupName] += addedSeconds;
+            aggregatedUsage[appName] += addedSeconds;
         }
-    }
-
-    std::lock_guard<std::mutex> poolLock(s_poolMutex);
-    s_timePools.clear();
-    for (const auto& [name, totalSecs] : aggregatedUsage)
-    {
-        auto pool = std::make_shared<TimePool>();
-        pool->timeUsedSeconds.store(totalSecs);
-        s_timePools[name] = pool;
     }
 
     return aggregatedUsage;
 }
 
-void UsageRepository::appendUsageLog(const std::string& groupName, int addedSeconds)
+void UsageRepository::appendUsageLog(const std::string& appName, int addedSeconds)
 {
     if (addedSeconds <= 0) return;
 
     std::string today = getCurrentDateStr();
     
+    std::lock_guard<std::mutex> lock(s_fileMutex);
+    std::ofstream outFile("daily_usage.csv", std::ios::app);
+    if (outFile.is_open())
     {
-        std::lock_guard<std::mutex> lock(s_fileMutex);
-        std::ofstream outFile("daily_usage.csv", std::ios::app);
-        if (outFile.is_open())
-        {
-            outFile << today << "," << groupName << "," << addedSeconds << "\n";
-        }
+        outFile << today << "," << appName << "," << addedSeconds << "\n";
     }
-
-    auto pool = getTimePool(groupName);
-    pool->timeUsedSeconds.fetch_add(addedSeconds, std::memory_order_relaxed);
-}
-
-std::shared_ptr<TimePool> UsageRepository::getTimePool(const std::string& groupName)
-{
-    std::lock_guard<std::mutex> lock(s_poolMutex);
-    auto it = s_timePools.find(groupName);
-    if (it != s_timePools.end())
-    {
-        return it->second;
-    }
-    
-    auto newPool = std::make_shared<TimePool>();
-    s_timePools[groupName] = newPool;
-    return newPool;
 }

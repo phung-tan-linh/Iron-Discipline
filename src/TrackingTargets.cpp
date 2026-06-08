@@ -1,77 +1,55 @@
-// [PLAN]: Triển khai TrackingTargets. Loại bỏ cờ g_WarningActive để thời gian không bị đóng băng. AppItem dùng TerminateProcess để ép đóng .exe, WebItem dùng SendInput (Ctrl+W) để đóng tab. Cả hai đều gọi UIManager để hiển thị cảnh báo.
+// [PLAN]: Triển khai các lớp TrackingTargets. Quản lý thời gian độc lập trong từng object. Sử dụng WinAPI TerminateProcess cho App và SendInput (Ctrl+W) cho Web. Tự động đồng bộ cờ cảnh báo (syncWarningState) để tránh spam UI khi khởi động lại.
 #include "../include/TrackingTargets.h"
-#include "UIManager.h"
+#include "../include/UIManager.h"
 #include <iostream>
 #include <algorithm>
 #include <cctype>
 
-TrackableItem::TrackableItem(std::string itemName, int limitMinutes, std::shared_ptr<TimePool> pool)
-    : name(std::move(itemName)), timeLimitMinutes(limitMinutes), sharedPool(std::move(pool))
+TrackableItem::TrackableItem(std::string itemName, int limitMinutes, int initialUsedSeconds)
+    : name(std::move(itemName)), timeLimitMinutes(limitMinutes), timeUsedSeconds(initialUsedSeconds),
+      isFirstWarningShown(false), isSecondWarningShown(false)
 {
     nameLower = name;
     std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(),
                    [](unsigned char c) { return std::tolower(c); });
+    syncWarningState(timeUsedSeconds / 60);
 }
 
 std::string TrackableItem::getName() const { return name; }
 std::string TrackableItem::getNameLower() const { return nameLower; }
 int TrackableItem::getTimeLimit() const { return timeLimitMinutes; }
+int TrackableItem::getTimeUsed() const { return timeUsedSeconds / 60; }
 
-int TrackableItem::getTimeUsedSeconds() const
+void TrackableItem::addTimeUsed(int minutes) { timeUsedSeconds += minutes * 60; }
+void TrackableItem::addTimeUsedSeconds(int seconds) { timeUsedSeconds += seconds; }
+int TrackableItem::getTimeUsedSeconds() const { return timeUsedSeconds; }
+void TrackableItem::setTimeUsedSeconds(int seconds) { timeUsedSeconds = seconds; }
+bool TrackableItem::isTimeUp() const { return (timeUsedSeconds / 60) >= timeLimitMinutes; }
+
+void TrackableItem::syncWarningState(int currentUsedMinutes)
 {
-    if (sharedPool)
+    if (currentUsedMinutes >= timeLimitMinutes)
     {
-        return sharedPool->timeUsedSeconds.load(std::memory_order_relaxed);
+        isFirstWarningShown = true;
+        isSecondWarningShown = true;
     }
-    return 0;
-}
-
-int TrackableItem::getTimeUsed() const
-{
-    return getTimeUsedSeconds() / 60;
-}
-
-void TrackableItem::addTimeUsed(int minutes)
-{
-    if (minutes > 0)
+    else if (timeLimitMinutes - currentUsedMinutes <= 5)
     {
-        addTimeUsedSeconds(minutes * 60);
+        isFirstWarningShown = true;
     }
-}
-
-void TrackableItem::addTimeUsedSeconds(int seconds)
-{
-    if (seconds > 0 && sharedPool)
-    {
-        sharedPool->timeUsedSeconds.fetch_add(seconds, std::memory_order_relaxed);
-    }
-}
-
-void TrackableItem::setTimeUsedSeconds(int seconds)
-{
-    if (seconds >= 0 && sharedPool)
-    {
-        sharedPool->timeUsedSeconds.store(seconds, std::memory_order_relaxed);
-    }
-}
-
-bool TrackableItem::isTimeUp() const
-{
-    return getTimeUsedSeconds() >= (timeLimitMinutes * 60);
 }
 
 // --- AppItem Implementation ---
 
-AppItem::AppItem(std::string appName, int limitMinutes, std::shared_ptr<TimePool> pool, std::string execPath)
-    : TrackableItem(std::move(appName), limitMinutes, std::move(pool)),
-      executablePath(std::move(execPath)),
-      isFirstWarningShown(false), isSecondWarningShown(false) {}
+AppItem::AppItem(std::string appName, int limitMinutes, int initialUsedSeconds, std::string execPath)
+    : TrackableItem(std::move(appName), limitMinutes, initialUsedSeconds), executablePath(std::move(execPath))
+{
+}
 
 void AppItem::displayInfo() const
 {
-    std::cout << "[APP - .exe] " << name
-              << " | Da dung: " << getTimeUsed()
-              << "/" << timeLimitMinutes << " phut." << std::endl;
+    std::cout << "[App] " << name << " | Limit: " << timeLimitMinutes 
+              << "m | Used: " << getTimeUsed() << "m\n";
 }
 
 std::string AppItem::getType() const
@@ -81,26 +59,24 @@ std::string AppItem::getType() const
 
 void AppItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 {
-    int usedMins = getTimeUsed();
-    if (usedMins >= globalLimitMinutes)
+    int currentMinutes = timeUsedSeconds / 60;
+    
+    if (currentMinutes >= timeLimitMinutes)
     {
-        if (pid != 0)
-        {
-            HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-            if (hProcess != NULL)
-            {
-                TerminateProcess(hProcess, 0);
-                CloseHandle(hProcess);
-            }
-        }
-        
         if (!isSecondWarningShown)
         {
             UIManager::ShowWarning(2);
             isSecondWarningShown = true;
         }
+        
+        HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+        if (hProcess != NULL)
+        {
+            TerminateProcess(hProcess, 0);
+            CloseHandle(hProcess);
+        }
     }
-    else if (globalLimitMinutes - usedMins <= 5)
+    else if (timeLimitMinutes - currentMinutes <= 5)
     {
         if (!isFirstWarningShown)
         {
@@ -112,16 +88,15 @@ void AppItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 
 // --- WebItem Implementation ---
 
-WebItem::WebItem(std::string url, int limitMinutes, std::shared_ptr<TimePool> pool, std::string browser)
-    : TrackableItem(std::move(url), limitMinutes, std::move(pool)),
-      browserType(std::move(browser)),
-      isFirstWarningShown(false), isSecondWarningShown(false) {}
+WebItem::WebItem(std::string url, int limitMinutes, int initialUsedSeconds, std::string browser)
+    : TrackableItem(std::move(url), limitMinutes, initialUsedSeconds), browserType(std::move(browser))
+{
+}
 
 void WebItem::displayInfo() const
 {
-    std::cout << "[WEB - URL] " << name
-              << " | Da dung: " << getTimeUsed()
-              << "/" << timeLimitMinutes << " phut." << std::endl;
+    std::cout << "[Web] " << name << " | Limit: " << timeLimitMinutes 
+              << "m | Used: " << getTimeUsed() << "m\n";
 }
 
 std::string WebItem::getType() const
@@ -131,13 +106,19 @@ std::string WebItem::getType() const
 
 void WebItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 {
-    int usedMins = getTimeUsed();
-    if (usedMins >= globalLimitMinutes)
+    int currentMinutes = timeUsedSeconds / 60;
+    
+    if (currentMinutes >= timeLimitMinutes)
     {
-        if (hwnd != NULL)
+        if (!isSecondWarningShown)
+        {
+            UIManager::ShowWarning(2);
+            isSecondWarningShown = true;
+        }
+        
+        if (hwnd)
         {
             SetForegroundWindow(hwnd);
-            
             INPUT inputs[4] = {};
             
             inputs[0].type = INPUT_KEYBOARD;
@@ -156,14 +137,8 @@ void WebItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
             
             SendInput(4, inputs, sizeof(INPUT));
         }
-        
-        if (!isSecondWarningShown)
-        {
-            UIManager::ShowWarning(2);
-            isSecondWarningShown = true;
-        }
     }
-    else if (globalLimitMinutes - usedMins <= 5)
+    else if (timeLimitMinutes - currentMinutes <= 5)
     {
         if (!isFirstWarningShown)
         {

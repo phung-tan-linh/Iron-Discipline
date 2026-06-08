@@ -1,4 +1,4 @@
-// [PLAN]: Tích hợp TrackingEngine mới thay cho ProcessManager. Tạo lớp SystemSetup sử dụng Task Scheduler (schtasks) để tự động khởi chạy ngầm với quyền Admin (vượt UAC) thay cho Registry cũ. Loại bỏ các hàm lưu dữ liệu thủ công do đã có Append-Only Log.
+// [PLAN]: Tích hợp TrackingEngine mới. Loại bỏ hoàn toàn Task Scheduler/Registry, dựa vào Manifest để xin quyền Admin. Quản lý Single Instance, Tray Icon và Console Worker an toàn.
 #ifndef UNICODE
 #define UNICODE
 #define _UNICODE
@@ -9,7 +9,6 @@
 #include <atomic>
 #include <thread>
 #include <string>
-#include <cstdlib>
 #include "../include/ConsoleMenu.h"
 #include "../include/UIManager.h"
 #include "../include/TrackingEngine.h"
@@ -23,22 +22,6 @@ TimeEnforcer g_Engine;
 std::atomic<bool> isConsoleOpen(false);
 const wchar_t CLASS_NAME[] = L"IronDisciplineHiddenWindow";
 HHOOK g_hKeyboardHook = NULL;
-
-class SystemSetup
-{
-public:
-    static void InstallTaskScheduler()
-    {
-        char szPathToExe[MAX_PATH];
-        if (GetModuleFileNameA(NULL, szPathToExe, MAX_PATH))
-        {
-            std::string cmd = "schtasks /create /tn \"IronDiscipline\" /tr \"\\\"";
-            cmd += szPathToExe;
-            cmd += "\\\"\" /sc onlogon /rl highest /f";
-            system(cmd.c_str());
-        }
-    }
-};
 
 BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType)
 {
@@ -185,8 +168,6 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
     }
     
     UIManager::Init();
-    
-    SystemSetup::InstallTaskScheduler();
     
     std::thread([]() { g_Engine.monitorAndBlock(); }).detach();
     

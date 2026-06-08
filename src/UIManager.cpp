@@ -1,10 +1,11 @@
-// [PLAN]: Triển khai vòng lặp Render vô cực độc lập. Xử lý logic hiển thị/ẩn cửa sổ dựa trên g_WarningActive. Bổ sung Fallback Font an toàn.
+// [PLAN]: Triển khai vòng lặp Render vô cực độc lập. Xử lý logic hiển thị/ẩn cửa sổ dựa trên g_WarningActive. Bổ sung Fallback Font an toàn. Vá lỗi mất focus bằng cách lưu HWND của app trước khi hiện cảnh báo và trả lại focus ngay khi người dùng xác nhận.
 #include "../include/UIManager.h"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include <d3d11.h>
 #include <chrono>
+#include <thread>
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -19,6 +20,8 @@ static IDXGISwapChain *g_pSwapChain = NULL;
 static ID3D11RenderTargetView *g_mainRenderTargetView = NULL;
 static ImFont *fBig = nullptr;
 static ImFont *fSmall = nullptr;
+
+static HWND g_AppHwndToRestore = NULL;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -154,10 +157,18 @@ void UIManager::ShowWarning(int level)
 
 void UIManager::RenderOverlayLoop()
 {
+    int lastLevel = 0;
+
     while (true)
     {
         int currentLevel = g_WarningActive.load();
         
+        if (lastLevel == 0 && currentLevel > 0)
+        {
+            g_AppHwndToRestore = GetForegroundWindow();
+        }
+        lastLevel = currentLevel;
+
         MSG msg;
         while (PeekMessage(&msg, NULL, 0U, 0U, PM_REMOVE))
         {
@@ -227,6 +238,13 @@ void UIManager::RenderOverlayLoop()
             if (ImGui::Button(btn, bs))
             {
                 g_WarningActive = 0;
+                lastLevel = 0;
+                ShowWindow(hwnd, SW_HIDE);
+                if (g_AppHwndToRestore)
+                {
+                    SetForegroundWindow(g_AppHwndToRestore);
+                    g_AppHwndToRestore = NULL;
+                }
             }
             if (fSmall) ImGui::PopFont();
         }

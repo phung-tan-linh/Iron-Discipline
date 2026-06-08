@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai UI Console, sửa lỗi Compiler khởi tạo struct. Tối ưu Disk I/O bằng cách gom nhóm ghi/đọc (chỉ reload 1 lần sau vòng lặp) và lọc timeMins > 0.
+// [PLAN]: Áp dụng SRP (Single Responsibility Principle). ConsoleMenu chỉ chịu trách nhiệm hiển thị UI và điều hướng luồng. Toàn bộ logic vòng lặp kiểm tra tính hợp lệ của mảng ID/String được chuyển giao sang InputValidator. Việc thao tác dữ liệu được giao cho UsageRepository.
 #include "../include/ConsoleMenu.h"
 #include "../include/DataStore.h"
 #include "../include/InputValidator.h"
@@ -79,64 +79,20 @@ void ConsoleMenu::showAddBasicLimit()
         printBasicList();
         std::cout << "\n - Muon them gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon them gioi han tat ca thi an 'a'.\n - Muon quay lai thi an 'n'.\n-> ";
         
-        std::vector<int> selectedIds;
-        int failCountInput = 0;
-        bool validInput = false, isAll = false;
-        
         std::vector<int> validIds;
         for (const auto &cat : basicList)
             for (const auto &item : cat.items)
                 validIds.push_back(item.id);
                 
-        while (failCountInput < 3)
-        {
-            std::string input;
-            std::getline(std::cin, input);
-            
-            if (input == "n" || input == "N")
-            {
-                currentState = AppState::LIMIT_APP;
-                return;
-            }
-            if (input == "a" || input == "A")
-            {
-                selectedIds = validIds;
-                validInput = isAll = true;
-                break;
-            }
-            
-            selectedIds = InputValidator::parseSpaceSeparatedIntegers(input);
-            if (selectedIds.empty())
-            {
-                failCountInput++;
-                std::cout << "Du lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
-                continue;
-            }
-            
-            bool allValid = true;
-            for (int id : selectedIds)
-            {
-                if (std::find(validIds.begin(), validIds.end(), id) == validIds.end())
-                {
-                    allValid = false;
-                    break;
-                }
-            }
-                
-            if (!allValid)
-            {
-                failCountInput++;
-                std::cout << "Du lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
-                selectedIds.clear();
-            }
-            else
-            {
-                validInput = true;
-                break;
-            }
-        }
+        bool isAll = false, isCancel = false;
+        std::vector<int> selectedIds = InputValidator::getValidSelection(validIds, isAll, isCancel);
         
-        if (!validInput)
+        if (isCancel)
+        {
+            currentState = AppState::LIMIT_APP;
+            return;
+        }
+        if (selectedIds.empty())
         {
             currentState = AppState::MAIN_MENU;
             return;
@@ -204,17 +160,12 @@ void ConsoleMenu::handleCustomOuterList()
     {
         clearScreen();
         std::cout << " - Muon them gioi han app/web ngoai danh sach co ban thi\nLiet ke cac app(.exe)/url/ten mien cach nhau boi dau cach.\nVi du: osu!.exe https://github.com/phung-tan-linh facebook.com\nAn 'n' de quay lai.\n-> ";
-        std::string inputStr;
-        std::getline(std::cin, inputStr);
         
-        if (inputStr == "n" || inputStr == "N")
+        bool isCancel = false;
+        std::vector<std::string> customNames = InputValidator::getValidStringsInput(isCancel);
+        
+        if (isCancel)
             return;
-            
-        std::vector<std::string> customNames;
-        std::stringstream ss(inputStr);
-        std::string temp;
-        while (ss >> temp)
-            customNames.push_back(temp);
             
         if (customNames.empty())
         {
@@ -267,61 +218,18 @@ void ConsoleMenu::handleCustomBasicList()
         printBasicList();
         std::cout << "\n - Muon them gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon them gioi han tat ca thi an 'a'.\n - Muon quay lai menu Gioi han ung dung thi an 'n'.\n-> ";
         
-        int failCountInput = 0;
-        std::vector<int> selectedIds;
-        bool isAll = false, validSelection = false;
-        
         std::vector<int> validIds;
         for (const auto &cat : basicList)
             for (const auto &item : cat.items)
                 validIds.push_back(item.id);
                 
-        while (failCountInput < 3)
-        {
-            std::string input;
-            std::getline(std::cin, input);
-            
-            if (input == "n" || input == "N")
-                return;
-            if (input == "a" || input == "A")
-            {
-                selectedIds = validIds;
-                isAll = validSelection = true;
-                break;
-            }
-            
-            selectedIds = InputValidator::parseSpaceSeparatedIntegers(input);
-            if (selectedIds.empty())
-            {
-                failCountInput++;
-                std::cout << "\nDu lieu khong hop le. Yeu cau nhap lai:\n-> ";
-                continue;
-            }
-            
-            bool allValid = true;
-            for (int id : selectedIds)
-            {
-                if (std::find(validIds.begin(), validIds.end(), id) == validIds.end())
-                {
-                    allValid = false;
-                    break;
-                }
-            }
-                
-            if (!allValid)
-            {
-                failCountInput++;
-                std::cout << "\nDu lieu khong hop le. Yeu cau nhap lai:\n-> ";
-                selectedIds.clear();
-            }
-            else
-            {
-                validSelection = true;
-                break;
-            }
-        }
+        bool isAll = false, isCancel = false;
+        std::vector<int> selectedIds = InputValidator::getValidSelection(validIds, isAll, isCancel);
         
-        if (!validSelection)
+        if (isCancel)
+            return;
+            
+        if (selectedIds.empty())
         {
             currentState = AppState::MAIN_MENU;
             return;
@@ -445,62 +353,19 @@ void ConsoleMenu::handleRemoveLimitLogic()
         
         std::cout << "\n - Muon bo gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon bo gioi han tat ca thi an 'a'.\n- Muon quay lai thi an 'n'.\n-> ";
         
-        int failCountRemove = 0;
-        std::vector<int> idsToRemove;
-        bool validRemove = false, isAllRemove = false;
+        std::vector<int> validIds;
+        for (const auto &pair : displayMap)
+            validIds.push_back(pair.first);
+            
+        bool isAllRemove = false, isCancel = false;
+        std::vector<int> idsToRemove = InputValidator::getValidSelection(validIds, isAllRemove, isCancel);
         
-        while (failCountRemove < 3)
+        if (isCancel)
         {
-            std::string input;
-            std::getline(std::cin, input);
-            
-            if (input == "n" || input == "N")
-            {
-                currentState = AppState::LIMIT_APP;
-                return;
-            }
-            if (input == "a" || input == "A")
-            {
-                for (const auto &pair : displayMap)
-                    idsToRemove.push_back(pair.first);
-                isAllRemove = validRemove = true;
-                break;
-            }
-            
-            idsToRemove = InputValidator::parseSpaceSeparatedIntegers(input);
-            if (idsToRemove.empty())
-            {
-                failCountRemove++;
-                if (failCountRemove < 3)
-                    std::cout << "\nDu lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
-                continue;
-            }
-            
-            bool allValid = true;
-            for (int id : idsToRemove)
-            {
-                if (id < 1 || id >= displayId)
-                {
-                    allValid = false;
-                    break;
-                }
-            }
-                
-            if (!allValid)
-            {
-                failCountRemove++;
-                if (failCountRemove < 3)
-                    std::cout << "\nDu lieu nhap vao khong hop le. Yeu cau nhap lai:\n-> ";
-                idsToRemove.clear();
-            }
-            else
-            {
-                validRemove = true;
-                break;
-            }
+            currentState = AppState::LIMIT_APP;
+            return;
         }
-        
-        if (!validRemove)
+        if (idsToRemove.empty())
         {
             currentState = AppState::MAIN_MENU;
             return;

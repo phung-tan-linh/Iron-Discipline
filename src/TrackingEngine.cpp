@@ -1,4 +1,4 @@
-// [PLAN]: Triển khai TrackingEngine. SystemScanner chuyên trách WinAPI. TimeEnforcer dùng .find() O(1) cho App và duyệt nhẹ cho Web. Ghi Append-Log mỗi khi chạm mốc 60 giây.
+// [PLAN]: Triển khai TrackingEngine. SystemScanner chuyên trách WinAPI. TimeEnforcer dùng .find() O(1) cho App và duyệt nhẹ cho Web. Tối ưu CPU bằng cách cache HWND, ProcessName và WindowTitle. Ghi Append-Log mỗi khi chạm mốc 60 giây.
 #include "../include/TrackingEngine.h"
 #include "../include/DataStore.h"
 #include <psapi.h>
@@ -44,8 +44,7 @@ void TimeEnforcer::reloadLimits()
 {
     activeTargets.clear();
     
-    // Đảm bảo TimePools được nạp từ file log trước khi gán vào TrackableItem
-    UsageRepository::loadDailyUsage();
+    auto dailyUsage = UsageRepository::loadDailyUsage();
     auto limits = UsageRepository::getActiveLimits();
 
     for (const auto& limit : limits)
@@ -54,16 +53,16 @@ void TimeEnforcer::reloadLimits()
         std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
                        [](unsigned char c) { return std::tolower(c); });
 
-        auto pool = UsageRepository::getTimePool(limit.name);
+        int usedSecs = dailyUsage[limit.name];
         std::shared_ptr<TrackableItem> item;
 
         if (limit.name.find(".exe") != std::string::npos)
         {
-            item = std::make_shared<AppItem>(limit.name, limit.timeLimit, pool);
+            item = std::make_shared<AppItem>(limit.name, limit.timeLimit, usedSecs);
         }
         else
         {
-            item = std::make_shared<WebItem>(limit.name, limit.timeLimit, pool);
+            item = std::make_shared<WebItem>(limit.name, limit.timeLimit, usedSecs);
         }
 
         activeTargets[keyLower] = item;
@@ -75,6 +74,11 @@ void TimeEnforcer::monitorAndBlock()
     currentDate = UsageRepository::getCurrentDateStr();
     reloadLimits();
 
+    static HWND lastHwnd = NULL;
+    static std::string cachedProcessName = "";
+    static std::string cachedWindowTitle = "";
+    static DWORD cachedPid = 0;
+
     while (true)
     {
         std::string newDate = UsageRepository::getCurrentDateStr();
@@ -84,37 +88,37 @@ void TimeEnforcer::monitorAndBlock()
             reloadLimits();
         }
 
-        HWND hwnd = GetForegroundWindow();
-        if (hwnd)
+        HWND currentHwnd = GetForegroundWindow();
+        if (currentHwnd)
         {
-            DWORD pid = 0;
-            GetWindowThreadProcessId(hwnd, &pid);
+            if (currentHwnd != lastHwnd)
+            {
+                lastHwnd = currentHwnd;
+                GetWindowThreadProcessId(currentHwnd, &cachedPid);
 
-            std::string processName = SystemScanner::getActiveProcessName(pid);
-            std::string windowTitle = SystemScanner::getActiveWindowTitle(hwnd);
+                cachedProcessName = SystemScanner::getActiveProcessName(cachedPid);
+                cachedWindowTitle = SystemScanner::getActiveWindowTitle(currentHwnd);
 
-            // Tối ưu: Chỉ transform chữ thường 1 lần duy nhất mỗi giây cho tiến trình hiện tại
-            std::transform(processName.begin(), processName.end(), processName.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-            std::transform(windowTitle.begin(), windowTitle.end(), windowTitle.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
+                std::transform(cachedProcessName.begin(), cachedProcessName.end(), cachedProcessName.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+                std::transform(cachedWindowTitle.begin(), cachedWindowTitle.end(), cachedWindowTitle.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+            }
 
             std::shared_ptr<TrackableItem> matchedItem = nullptr;
 
-            // Tra cứu O(1) cho Application bằng Hash Map
-            auto it = activeTargets.find(processName);
+            auto it = activeTargets.find(cachedProcessName);
             if (it != activeTargets.end() && it->second->getType() == "Application")
             {
                 matchedItem = it->second;
             }
             else
             {
-                // Fallback tìm kiếm chuỗi cho Website (chỉ duyệt các WebItem)
                 for (const auto& [key, item] : activeTargets)
                 {
                     if (item->getType() == "Website")
                     {
-                        if (windowTitle.find(key) != std::string::npos)
+                        if (cachedWindowTitle.find(key) != std::string::npos)
                         {
                             matchedItem = item;
                             break;
@@ -126,9 +130,8 @@ void TimeEnforcer::monitorAndBlock()
             if (matchedItem)
             {
                 matchedItem->addTimeUsedSeconds(1);
-                matchedItem->checkAndEnforce(hwnd, pid, matchedItem->getTimeLimit());
+                matchedItem->checkAndEnforce(currentHwnd, cachedPid, matchedItem->getTimeLimit());
 
-                // Append-Only Log: Ghi xuống đĩa mỗi khi tích lũy đủ 60 giây (1 phút)
                 int currentSecs = matchedItem->getTimeUsedSeconds();
                 if (currentSecs > 0 && currentSecs % 60 == 0)
                 {
@@ -137,7 +140,6 @@ void TimeEnforcer::monitorAndBlock()
             }
         }
 
-        // Ngủ 1 giây nhưng vẫn giữ cho Message Loop của Windows hoạt động mượt mà
         MsgWaitForMultipleObjects(0, NULL, FALSE, 1000, QS_ALLEVENTS);
     }
 }

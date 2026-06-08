@@ -1,12 +1,10 @@
-// [PLAN]: Gộp Models và FileManager thành DataStore. Áp dụng Append-Only Log để chống mất dữ liệu khi crash. Quản lý thời gian bằng Shared Time Pool (std::atomic) kết hợp std::shared_ptr để tra cứu O(1) và an toàn đa luồng.
+// [PLAN]: Gộp Models và FileManager thành DataStore. Áp dụng Append-Only Log để chống mất dữ liệu khi crash. Loại bỏ hoàn toàn TimePool, chuyển sang quản lý state trực tiếp tại các luồng/component cần thiết để giảm độ phức tạp và tránh rò rỉ bộ nhớ.
 #ifndef DATASTORE_H
 #define DATASTORE_H
 
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <memory>
-#include <atomic>
 #include <mutex>
 
 enum class AppState
@@ -39,17 +37,10 @@ struct ActiveLimit
     ActiveLimit(int t, std::string n, int tl) : type(t), name(std::move(n)), timeLimit(tl) {}
 };
 
-struct TimePool
-{
-    std::atomic<int> timeUsedSeconds{0};
-};
-
 class UsageRepository
 {
 private:
     static std::mutex s_fileMutex;
-    static std::mutex s_poolMutex;
-    static std::unordered_map<std::string, std::shared_ptr<TimePool>> s_timePools;
 
 public:
     static std::string getCurrentDateStr();
@@ -61,9 +52,7 @@ public:
     static void addOrUpdateActiveLimit(const ActiveLimit& limit);
 
     static std::unordered_map<std::string, int> loadDailyUsage();
-    static void appendUsageLog(const std::string& groupName, int addedSeconds);
-    
-    static std::shared_ptr<TimePool> getTimePool(const std::string& groupName);
+    static void appendUsageLog(const std::string& appName, int addedSeconds);
 };
 
 #endif
