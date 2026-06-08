@@ -31,6 +31,8 @@ LRESULT WINAPI UIManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
         return true;
     switch (msg)
     {
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE; // Ngăn chặn OS cấp Focus khi người dùng click vào Overlay
     case WM_SIZE:
         if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
         {
@@ -121,7 +123,8 @@ void UIManager::Init()
     RegisterClassExA(&wc);
     
     int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
-    hwnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "UIMgr", "", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
+    // Thêm WS_EX_NOACTIVATE để đảm bảo Overlay không bao giờ cướp Focus
+    hwnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "UIMgr", "", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
     
     if (!CreateDeviceD3D(hwnd))
     {
@@ -190,12 +193,8 @@ void UIManager::RenderOverlayLoop()
 
         if (!IsWindowVisible(hwnd))
         {
-            ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
-        }
-        else if (GetForegroundWindow() != hwnd)
-        {
-            SetForegroundWindow(hwnd);
+            // Dùng SW_SHOWNOACTIVATE thay vì SW_SHOW để giữ nguyên Focus cho Game
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
 
         ImGui_ImplDX11_NewFrame();

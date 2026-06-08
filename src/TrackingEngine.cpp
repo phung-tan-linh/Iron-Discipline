@@ -75,6 +75,7 @@ void TimeEnforcer::monitorAndBlock()
     reloadLimits();
 
     static HWND lastHwnd = NULL;
+    static std::string lastWindowTitleRaw = "";
     static std::string cachedProcessName = "";
     static std::string cachedWindowTitle = "";
     static DWORD cachedPid = 0;
@@ -91,13 +92,16 @@ void TimeEnforcer::monitorAndBlock()
         HWND currentHwnd = GetForegroundWindow();
         if (currentHwnd)
         {
-            if (currentHwnd != lastHwnd)
+            std::string currentTitle = SystemScanner::getActiveWindowTitle(currentHwnd);
+
+            if (currentHwnd != lastHwnd || currentTitle != lastWindowTitleRaw)
             {
                 lastHwnd = currentHwnd;
+                lastWindowTitleRaw = currentTitle;
+                
                 GetWindowThreadProcessId(currentHwnd, &cachedPid);
-
                 cachedProcessName = SystemScanner::getActiveProcessName(cachedPid);
-                cachedWindowTitle = SystemScanner::getActiveWindowTitle(currentHwnd);
+                cachedWindowTitle = currentTitle;
 
                 std::transform(cachedProcessName.begin(), cachedProcessName.end(), cachedProcessName.begin(),
                                [](unsigned char c) { return std::tolower(c); });

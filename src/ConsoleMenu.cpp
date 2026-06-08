@@ -302,7 +302,7 @@ void ConsoleMenu::handleRemoveLimitLogic()
             validIds.push_back(dl.displayId);
         }
         
-        std::cout << "\n - Muon bo gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon bo gioi han tat ca thi an 'a'.\n- Muon quay lai thi an 'n'.\n-> ";
+        std::cout << "\n - Muon bo gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon bo gioi han tat ca thi an 'a'.\n - Muon quay lai thi an 'n'.\n-> ";
         
         bool isAllRemove = false, isCancel = false;
         std::vector<int> idsToRemove = InputValidator::getValidSelection(validIds, isAllRemove, isCancel);
