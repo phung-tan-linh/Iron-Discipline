@@ -1,6 +1,6 @@
 // [PLAN]: Triển khai Append-Only Log ghi nối file CSV (std::ios::app). Ẩn logic parse CSV vào anonymous namespace (SRP).
-// Bổ sung addLimitsByBasicIds và removeLimitsByIds để xử lý logic tìm kiếm/xóa limit theo ID hiển thị.
-// Đảm bảo Thread-safe bằng std::mutex khi I/O. Đã loại bỏ hoàn toàn TimePool theo yêu cầu.
+// Quản lý s_cachedBasicList nội bộ. Cung cấp các API getCachedBasicList, getAllBasicItemIds, addLimitsByBasicIds độc lập.
+// Đảm bảo Thread-safe bằng std::mutex khi I/O và kiểm soát ngoại lệ trả về bool khi thao tác file.
 #include "../include/DataStore.h"
 #include <fstream>
 #include <sstream>
@@ -10,6 +10,7 @@
 #include <algorithm>
 
 std::mutex UsageRepository::s_fileMutex;
+std::vector<Category> UsageRepository::s_cachedBasicList;
 
 namespace
 {
@@ -54,8 +55,9 @@ std::string UsageRepository::getCurrentDateStr()
     return oss.str();
 }
 
-void UsageRepository::loadBasicList(const std::string& filename, std::vector<Category>& outList)
+void UsageRepository::loadBasicList(const std::string& filename)
 {
+    s_cachedBasicList.clear();
     auto csvData = readCSV(filename);
     int globalItemId = 1;
     for (const auto& row : csvData)
@@ -64,7 +66,7 @@ void UsageRepository::loadBasicList(const std::string& filename, std::vector<Cat
             continue;
         std::string romanID = row[0], categoryTitle = row[1], itemName = row[3];
         bool foundCat = false;
-        for (auto& cat : outList)
+        for (auto& cat : s_cachedBasicList)
         {
             if (cat.romanID == romanID)
             {
@@ -79,13 +81,32 @@ void UsageRepository::loadBasicList(const std::string& filename, std::vector<Cat
             newCat.romanID = romanID;
             newCat.title = categoryTitle;
             newCat.items.push_back({globalItemId++, itemName});
-            outList.push_back(std::move(newCat));
+            s_cachedBasicList.push_back(std::move(newCat));
         }
     }
 }
 
+const std::vector<Category>& UsageRepository::getCachedBasicList()
+{
+    return s_cachedBasicList;
+}
+
+std::vector<int> UsageRepository::getAllBasicItemIds()
+{
+    std::vector<int> ids;
+    for (const auto& cat : s_cachedBasicList)
+    {
+        for (const auto& item : cat.items)
+        {
+            ids.push_back(item.id);
+        }
+    }
+    return ids;
+}
+
 std::vector<ActiveLimit> UsageRepository::getActiveLimits()
 {
+    std::lock_guard<std::mutex> lock(s_fileMutex);
     std::vector<ActiveLimit> limits;
     auto csvData = readCSV("active_limits.csv");
     for (const auto& row : csvData)
@@ -98,7 +119,7 @@ std::vector<ActiveLimit> UsageRepository::getActiveLimits()
     return limits;
 }
 
-void UsageRepository::saveAllActiveLimits(const std::vector<ActiveLimit>& limits)
+bool UsageRepository::saveAllActiveLimits(const std::vector<ActiveLimit>& limits)
 {
     std::lock_guard<std::mutex> lock(s_fileMutex);
     std::ofstream outFile("active_limits.csv", std::ios::trunc);
@@ -106,7 +127,9 @@ void UsageRepository::saveAllActiveLimits(const std::vector<ActiveLimit>& limits
     {
         for (const auto& l : limits)
             outFile << l.type << "," << l.name << "," << l.timeLimit << "\n";
+        return true;
     }
+    return false;
 }
 
 void UsageRepository::addOrUpdateActiveLimit(const ActiveLimit& limit)
@@ -127,12 +150,12 @@ void UsageRepository::addOrUpdateActiveLimit(const ActiveLimit& limit)
     saveAllActiveLimits(limits);
 }
 
-void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, const std::vector<Category>& basicList, int timeMins)
+void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, int timeMins)
 {
     if (timeMins <= 0) return;
     for (int id : ids)
     {
-        for (const auto& cat : basicList)
+        for (const auto& cat : s_cachedBasicList)
         {
             for (const auto& item : cat.items)
             {
@@ -145,41 +168,51 @@ void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, const std
     }
 }
 
-void UsageRepository::removeLimitsByIds(const std::vector<int>& idsToRemove)
+std::vector<DisplayLimit> UsageRepository::getSortedDisplayLimits()
 {
     auto allLimits = getActiveLimits();
-    std::vector<ActiveLimit> basicLimits, customLimits;
-    for (const auto& limit : allLimits)
-    {
-        if (limit.type == 1)
-            basicLimits.push_back(limit);
-        else
-            customLimits.push_back(limit);
-    }
     
     auto sortAlpha = [](const ActiveLimit& a, const ActiveLimit& b)
     { return a.name < b.name; };
     
-    std::sort(basicLimits.begin(), basicLimits.end(), sortAlpha);
-    std::sort(customLimits.begin(), customLimits.end(), sortAlpha);
+    std::sort(allLimits.begin(), allLimits.end(), sortAlpha);
     
-    std::vector<ActiveLimit> sortedLimits;
-    sortedLimits.insert(sortedLimits.end(), basicLimits.begin(), basicLimits.end());
-    sortedLimits.insert(sortedLimits.end(), customLimits.begin(), customLimits.end());
+    std::vector<DisplayLimit> result;
+    int displayId = 1;
     
-    std::vector<ActiveLimit> limitsToKeep;
-    for (size_t i = 0; i < sortedLimits.size(); ++i)
+    for (const auto& limit : allLimits)
     {
-        int displayId = static_cast<int>(i) + 1;
-        if (std::find(idsToRemove.begin(), idsToRemove.end(), displayId) == idsToRemove.end())
-        {
-            limitsToKeep.push_back(sortedLimits[i]);
-        }
+        std::string typeStr = (limit.type == 1) ? "Co ban" : "Tuy chon";
+        result.push_back({displayId++, typeStr, limit.name, limit.timeLimit});
     }
     
-    saveAllActiveLimits(limitsToKeep);
+    return result;
 }
 
+bool UsageRepository::removeLimitsByDisplayIds(const std::vector<int>& displayIds, const std::vector<DisplayLimit>& currentDisplayList)
+{
+    std::unordered_set<std::string> namesToRemove;
+    for (int id : displayIds)
+    {
+        int index = id - 1;
+        if (index >= 0 && index < static_cast<int>(currentDisplayList.size()))
+        {
+            namesToRemove.insert(currentDisplayList[index].name);
+        }
+    }
+
+    auto allLimits = getActiveLimits();
+    std::vector<ActiveLimit> limitsToKeep;
+    for (const auto& limit : allLimits)
+    {
+        if (namesToRemove.find(limit.name) == namesToRemove.end())
+        {
+            limitsToKeep.push_back(limit);
+        }
+    }
+
+    return saveAllActiveLimits(limitsToKeep);
+}
 std::unordered_map<std::string, int> UsageRepository::loadDailyUsage()
 {
     std::unordered_map<std::string, int> aggregatedUsage;

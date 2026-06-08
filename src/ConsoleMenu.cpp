@@ -1,18 +1,19 @@
-// [PLAN]: Áp dụng SRP (Single Responsibility Principle). ConsoleMenu chỉ chịu trách nhiệm hiển thị UI và điều hướng luồng. Toàn bộ logic vòng lặp kiểm tra tính hợp lệ của mảng ID/String được chuyển giao sang InputValidator. Việc thao tác dữ liệu được giao cho UsageRepository.
+// [PLAN]: Áp dụng triệt để SRP. ConsoleMenu chỉ chịu trách nhiệm hiển thị UI và điều hướng luồng.
+// Loại bỏ hoàn toàn việc lưu trữ basicList. Giao tiếp với DataStore thông qua các hàm getCachedBasicList,
+// getAllBasicItemIds, addLimitsByBasicIds và removeLimitsByDisplayIds.
 #include "../include/ConsoleMenu.h"
 #include "../include/DataStore.h"
 #include "../include/InputValidator.h"
 #include "../include/TrackingEngine.h"
 #include <iostream>
 #include <iomanip>
-#include <map>
 #include <algorithm>
 
 extern TimeEnforcer g_Engine;
 
 ConsoleMenu::ConsoleMenu() : currentState(AppState::MAIN_MENU) {}
 
-void ConsoleMenu::init(const std::string &basicListFile) { UsageRepository::loadBasicList(basicListFile, basicList); }
+void ConsoleMenu::init(const std::string &basicListFile) { UsageRepository::loadBasicList(basicListFile); }
 
 void ConsoleMenu::clearScreen() { system("cls"); }
 
@@ -48,7 +49,7 @@ std::string ConsoleMenu::formatTime(int minutes)
 void ConsoleMenu::printBasicList()
 {
     std::cout << "Duoi day la toan bo danh sach co ban:\n";
-    for (const auto &cat : basicList)
+    for (const auto &cat : UsageRepository::getCachedBasicList())
     {
         std::cout << cat.romanID << ". " << cat.title << ": \n";
         for (const auto &item : cat.items)
@@ -79,10 +80,7 @@ void ConsoleMenu::showAddBasicLimit()
         printBasicList();
         std::cout << "\n - Muon them gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon them gioi han tat ca thi an 'a'.\n - Muon quay lai thi an 'n'.\n-> ";
         
-        std::vector<int> validIds;
-        for (const auto &cat : basicList)
-            for (const auto &item : cat.items)
-                validIds.push_back(item.id);
+        std::vector<int> validIds = UsageRepository::getAllBasicItemIds();
                 
         bool isAll = false, isCancel = false;
         std::vector<int> selectedIds = InputValidator::getValidSelection(validIds, isAll, isCancel);
@@ -124,19 +122,7 @@ void ConsoleMenu::showAddBasicLimit()
         {
             if (timeMins > 0)
             {
-                for (int id : selectedIds)
-                {
-                    for (const auto &cat : basicList)
-                    {
-                        for (const auto &item : cat.items)
-                        {
-                            if (item.id == id)
-                            {
-                                UsageRepository::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
-                            }
-                        }
-                    }
-                }
+                UsageRepository::addLimitsByBasicIds(selectedIds, timeMins);
                 g_Engine.reloadLimits();
             }
             std::cout << "\nDa them gioi han thanh cong " << targetStr << ".\n";
@@ -218,10 +204,7 @@ void ConsoleMenu::handleCustomBasicList()
         printBasicList();
         std::cout << "\n - Muon them gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon them gioi han tat ca thi an 'a'.\n - Muon quay lai menu Gioi han ung dung thi an 'n'.\n-> ";
         
-        std::vector<int> validIds;
-        for (const auto &cat : basicList)
-            for (const auto &item : cat.items)
-                validIds.push_back(item.id);
+        std::vector<int> validIds = UsageRepository::getAllBasicItemIds();
                 
         bool isAll = false, isCancel = false;
         std::vector<int> selectedIds = InputValidator::getValidSelection(validIds, isAll, isCancel);
@@ -251,19 +234,7 @@ void ConsoleMenu::handleCustomBasicList()
         {
             if (timeMins > 0)
             {
-                for (int id : selectedIds)
-                {
-                    for (const auto &cat : basicList)
-                    {
-                        for (const auto &item : cat.items)
-                        {
-                            if (item.id == id)
-                            {
-                                UsageRepository::addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
-                            }
-                        }
-                    }
-                }
+                UsageRepository::addLimitsByBasicIds(selectedIds, timeMins);
                 g_Engine.reloadLimits();
             }
                         
@@ -318,45 +289,21 @@ void ConsoleMenu::handleRemoveLimitLogic()
 {
     while (true)
     {
-        auto allLimits = UsageRepository::getActiveLimits();
-        std::vector<ActiveLimit> basicLimits, customLimits;
-        for (const auto &limit : allLimits)
-        {
-            if (limit.type == 1)
-                basicLimits.push_back(limit);
-            else
-                customLimits.push_back(limit);
-        }
-                
-        auto sortAlpha = [](const ActiveLimit &a, const ActiveLimit &b)
-        { return a.name < b.name; };
-        
-        std::sort(basicLimits.begin(), basicLimits.end(), sortAlpha);
-        std::sort(customLimits.begin(), customLimits.end(), sortAlpha);
+        auto displayList = UsageRepository::getSortedDisplayLimits();
         
         clearScreen();
-        std::cout << "Duoi day la toan bo app/web dang bi gioi han:\nI. Danh sach co ban:\n";
-        std::map<int, ActiveLimit> displayMap;
-        int displayId = 1;
-        for (const auto &limit : basicLimits)
-        {
-            std::cout << displayId << ". " << limit.name << " : " << formatTime(limit.timeLimit) << "\n";
-            displayMap[displayId++] = limit;
-        }
+        std::cout << "Duoi day la toan bo app/web dang bi gioi han:\n";
         
-        std::cout << "\n\nII. Danh sach ngoai:\n";
-        for (const auto &limit : customLimits)
+        std::vector<int> validIds;
+        
+        for (const auto& dl : displayList)
         {
-            std::cout << displayId << ". " << limit.name << " : " << formatTime(limit.timeLimit) << "\n";
-            displayMap[displayId++] = limit;
+            std::cout << dl.displayId << ". " << dl.name << " : " << formatTime(dl.limitMinutes) << "\n";
+            validIds.push_back(dl.displayId);
         }
         
         std::cout << "\n - Muon bo gioi han app/web nao thi liet ke cac so thu tu cua app/web do cach nhau boi dau cach.\n - Muon bo gioi han tat ca thi an 'a'.\n- Muon quay lai thi an 'n'.\n-> ";
         
-        std::vector<int> validIds;
-        for (const auto &pair : displayMap)
-            validIds.push_back(pair.first);
-            
         bool isAllRemove = false, isCancel = false;
         std::vector<int> idsToRemove = InputValidator::getValidSelection(validIds, isAllRemove, isCancel);
         
@@ -378,18 +325,16 @@ void ConsoleMenu::handleRemoveLimitLogic()
         
         if (conf == "y" || conf == "Y")
         {
-            std::vector<ActiveLimit> limitsToKeep;
-            for (const auto &pair : displayMap)
+            if (UsageRepository::removeLimitsByDisplayIds(idsToRemove, displayList))
             {
-                if (std::find(idsToRemove.begin(), idsToRemove.end(), pair.first) == idsToRemove.end())
-                {
-                    limitsToKeep.push_back(pair.second);
-                }
+                g_Engine.reloadLimits();
+                std::cout << "\nDa bo gioi han thanh cong " << targetStr << ".\n";
             }
-                    
-            UsageRepository::saveAllActiveLimits(limitsToKeep);
-            g_Engine.reloadLimits();
-            std::cout << "\nDa bo gioi han thanh cong " << targetStr << ".\n";
+            else
+            {
+                std::cout << "\nKhong the luu thay doi vao he thong!\n";
+            }
+            
             safeWait();
             currentState = AppState::LIMIT_APP;
             return;
