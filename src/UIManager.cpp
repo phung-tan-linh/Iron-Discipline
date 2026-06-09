@@ -1,4 +1,20 @@
-// [PLAN]: Triển khai vòng lặp Render vô cực độc lập. Xử lý logic hiển thị/ẩn cửa sổ dựa trên g_WarningActive. Bổ sung Fallback Font an toàn. Vá lỗi mất focus bằng cách lưu HWND của app trước khi hiện cảnh báo và trả lại focus ngay khi người dùng xác nhận.
+/*
+ * ============================================================================
+ * FILE: UIManager.cpp
+ * VAI TRÒ: Quản lý luồng hiển thị giao diện đồ họa (Overlay) và thao tác WinAPI.
+ *
+ * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Thao tác Cửa sổ Hệ thống (WinAPI): Sử dụng SetWindowLongPtr để bóc tách,
+ * chuyển đổi linh hoạt giữa cờ WS_EX_NOACTIVATE (tránh mất focus của game)
+ * và việc ép Z-Order lên Topmost để khóa màn hình.
+ * 2. Quản lý Đa luồng (Multithreading): Tách biệt hoàn toàn Vòng lặp Render
+ * DirectX 11 sang một thread độc lập (RenderOverlayLoop) để không làm
+ * nghẽn luồng xử lý chính của ứng dụng.
+ * 3. Cơ chế Focus Stealing an toàn: Lưu lại HWND của tiến trình hiện tại
+ * trước khi bung cảnh báo và trả lại focus ngay sau khi người dùng xác nhận.
+ * ============================================================================
+ */
+
 #include "../include/UIManager.h"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -22,9 +38,7 @@ static ImFont *fBig = nullptr;
 static ImFont *fSmall = nullptr;
 
 static HWND g_AppHwndToRestore = NULL;
-
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 LRESULT WINAPI UIManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
@@ -32,7 +46,9 @@ LRESULT WINAPI UIManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     switch (msg)
     {
     case WM_MOUSEACTIVATE:
-        return MA_NOACTIVATE; // Ngăn chặn OS cấp Focus khi người dùng click vào Overlay
+        // Ngăn OS cấp Focus khi người dùng vô tình click vào Overlay lúc nó đang là Cảnh báo 1 (Nhắc nhở)
+        // Điều này giúp người dùng không bị văng khỏi các game Fullscreen (Exclusive).
+        return MA_NOACTIVATE; 
     case WM_SIZE:
         if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
         {
@@ -78,10 +94,8 @@ bool UIManager::CreateDeviceD3D(HWND hWnd)
     sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     D3D_FEATURE_LEVEL featureLevel;
     const D3D_FEATURE_LEVEL featureLevelArray[2] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
-    
     if (D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext) != S_OK)
         return false;
-        
     ID3D11Texture2D *pBackBuffer;
     g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
     g_pd3dDevice->CreateRenderTargetView(pBackBuffer, NULL, &g_mainRenderTargetView);
@@ -118,14 +132,12 @@ void UIManager::Init()
     SetProcessDPIAware();
     if (initialized)
         return;
-        
     WNDCLASSEXA wc = {sizeof(WNDCLASSEXA), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, "UIMgr", NULL};
     RegisterClassExA(&wc);
-    
     int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
-    // Thêm WS_EX_NOACTIVATE để đảm bảo Overlay không bao giờ cướp Focus
-    hwnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "UIMgr", "", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
     
+    // Thêm WS_EX_NOACTIVATE để đảm bảo Overlay sinh ra ngầm, không cướp Focus của User
+    hwnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "UIMgr", "", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
     if (!CreateDeviceD3D(hwnd))
     {
         CleanupDeviceD3D();
@@ -137,7 +149,6 @@ void UIManager::Init()
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL;
-    
     fBig = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 64.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
     fSmall = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 36.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
     
@@ -146,6 +157,7 @@ void UIManager::Init()
     
     initialized = true;
     
+    // Tách vòng lặp Render UI sang luồng (thread) phụ độc lập để giải phóng CPU cho luồng chính
     std::thread(&UIManager::RenderOverlayLoop).detach();
 }
 
@@ -161,13 +173,12 @@ void UIManager::ShowWarning(int level)
 void UIManager::RenderOverlayLoop()
 {
     int lastLevel = 0;
-
     while (true)
     {
         int currentLevel = g_WarningActive.load();
-        
         if (lastLevel == 0 && currentLevel > 0)
         {
+            // Snapshot lưu lại HWND của app hiện tại đang dùng (để trả lại sau khi đóng UI)
             g_AppHwndToRestore = GetForegroundWindow();
         }
         lastLevel = currentLevel;
@@ -195,12 +206,14 @@ void UIManager::RenderOverlayLoop()
         {
             if (currentLevel == 1)
             {
+                // Cảnh báo mềm: Hiện lên màn hình nhưng KHÔNG lấy Focus (không làm văng game)
                 ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
             else if (currentLevel == 2)
             {
+                // Cảnh báo cứng (Hết giờ): Dùng toán tử Bitwise (~) tước bỏ cờ NOACTIVATE
                 LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-                exStyle &= ~WS_EX_NOACTIVATE;
+                exStyle &= ~WS_EX_NOACTIVATE; 
                 SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
                 
                 ShowWindow(hwnd, SW_SHOW);
@@ -209,6 +222,8 @@ void UIManager::RenderOverlayLoop()
         }
         else if (currentLevel == 2)
         {
+            // Radar Focus O(1): Nếu phát hiện Cảnh báo 2 bị mất Focus (người dùng cố bấm ra ngoài)
+            // Lập tức ép Z-Order (HWND_TOPMOST) và kéo Focus về lại Overlay.
             if (GetForegroundWindow() != hwnd)
             {
                 SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
@@ -219,17 +234,14 @@ void UIManager::RenderOverlayLoop()
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
-        
         ImGuiIO& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(640, 360));
         
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 4.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
-        
         ImGui::PushStyleColor(ImGuiCol_Border, currentLevel == 1 ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.08f, 0.95f));
-        
         ImGui::Begin("W", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
         ImVec2 ws = ImGui::GetWindowSize();
         
@@ -243,14 +255,16 @@ void UIManager::RenderOverlayLoop()
         if (fBig) ImGui::PopFont();
         
         if (fSmall) ImGui::PushFont(fSmall);
-        const char *tS = currentLevel == 1 ? u8"Còn 5 phút nữa thôi. Hãy lưu lại tiến trình ngay đi!" : u8"Thì phải gì ạ? Thì phải... Phải chịu, đừng có kêu!";
+        const char *tS = currentLevel == 1 ? u8"Còn 5 phút nữa thôi. Hãy lưu lại tiến trình ngay đi!"
+        : u8"Thì phải gì ạ? Thì phải... Phải chịu, đừng có kêu!";
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
         ImVec2 tsS = ImGui::CalcTextSize(tS);
         ImGui::SetCursorPos(ImVec2((ws.x - tsS.x) * 0.5f, ws.y * 0.42f));
         ImGui::Text(tS);
         ImGui::PopStyleColor();
         if (fSmall) ImGui::PopFont();
-
+        
+        // Anti-Spam: Buộc người dùng phải nhìn thông báo đủ 3 giây mới hiện nút tắt
         if (GetTickCount() - g_WarningStartTime >= 3000)
         {
             if (fSmall) ImGui::PushFont(fSmall);
@@ -260,25 +274,29 @@ void UIManager::RenderOverlayLoop()
             
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
             
-            ImVec4 btnColor = currentLevel == 1 ? ImVec4(0.85f, 0.65f, 0.0f, 1.0f) : ImVec4(0.8f, 0.1f, 0.1f, 1.0f);
-            ImVec4 btnHover = currentLevel == 1 ? ImVec4(0.95f, 0.75f, 0.1f, 1.0f) : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
-            ImVec4 btnActive = currentLevel == 1 ? ImVec4(0.75f, 0.55f, 0.0f, 1.0f) : ImVec4(0.7f, 0.0f, 0.0f, 1.0f);
+            ImVec4 btnColor = currentLevel == 1 ?
+            ImVec4(0.85f, 0.65f, 0.0f, 1.0f) : ImVec4(0.8f, 0.1f, 0.1f, 1.0f);
+            ImVec4 btnHover = currentLevel == 1 ?
+            ImVec4(0.95f, 0.75f, 0.1f, 1.0f) : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+            ImVec4 btnActive = currentLevel == 1 ?
+            ImVec4(0.75f, 0.55f, 0.0f, 1.0f) : ImVec4(0.7f, 0.0f, 0.0f, 1.0f);
             
             ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btnHover);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, btnActive);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-
             if (ImGui::Button(btn, bs))
             {
                 g_WarningActive = 0;
                 lastLevel = 0;
                 ShowWindow(hwnd, SW_HIDE);
                 
+                // Mặc giáp lại cho Overlay (Bật cờ NOACTIVATE)
                 LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
                 exStyle |= WS_EX_NOACTIVATE;
                 SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
-
+                
+                // Kỹ thuật Graceful Return: Hoàn trả lại Focus cho ứng dụng mà user đang dùng dở
                 if (g_AppHwndToRestore)
                 {
                     SetForegroundWindow(g_AppHwndToRestore);

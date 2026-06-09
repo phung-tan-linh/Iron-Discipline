@@ -1,6 +1,18 @@
-// [PLAN]: Triển khai các lớp TrackingTargets. Quản lý thời gian độc lập trong từng object.
-// Sử dụng WinAPI TerminateProcess cho App và SendInput (Ctrl+W) cho Web.
-// Áp dụng Debounce (3000ms) trong WebItem::checkAndEnforce để ngăn lỗi dồn ứ hàng đợi SendInput.
+/*
+ * ============================================================================
+ * FILE: TrackingTargets.cpp
+ * VAI TRÒ: Định nghĩa các thực thể mục tiêu (App và Web) và biện pháp trừng phạt.
+ * * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Thiết kế Hướng đối tượng Mức 4 (Polymorphism - Đa hình): 
+ * Lớp cha TrackableItem chứa hàm ảo (virtual), cho phép các lớp con AppItem 
+ * và WebItem ghi đè (override) để tự quyết định hình phạt riêng.
+ * 2. Tương tác WinAPI Cấp thấp:
+ * - AppItem: Sử dụng TerminateProcess để tiêu diệt tiến trình.
+ * - WebItem: Sử dụng kỹ thuật SendInput (giả lập phím Ctrl+W) kết hợp 
+ * thuật toán Debounce (chống dội phím 3000ms) để đóng tab an toàn.
+ * ============================================================================
+ */
+
 #include "../include/TrackingTargets.h"
 #include "../include/UIManager.h"
 #include <iostream>
@@ -62,7 +74,6 @@ std::string AppItem::getType() const
 void AppItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 {
     int currentMinutes = timeUsedSeconds / 60;
-    
     if (currentMinutes >= timeLimitMinutes)
     {
         if (!isSecondWarningShown)
@@ -71,6 +82,7 @@ void AppItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
             isSecondWarningShown = true;
         }
         
+        // [WINAPI CẤP THẤP] Mở handle với quyền TERMINATE để cưỡng chế đóng ứng dụng.
         HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
         if (hProcess != NULL)
         {
@@ -109,7 +121,6 @@ std::string WebItem::getType() const
 void WebItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
 {
     int currentMinutes = timeUsedSeconds / 60;
-    
     if (currentMinutes >= timeLimitMinutes)
     {
         if (!isSecondWarningShown)
@@ -120,9 +131,14 @@ void WebItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
         
         if (hwnd)
         {
+            // [THUẬT TOÁN DEBOUNCE] So sánh GetTickCount() với lastClosedTime (3000ms).
+            // Ngăn chặn lỗi Chain-Reaction (đóng hàng loạt tab khác) khi OS bị dồn ứ phím.
             if (GetTickCount() - lastClosedTime >= 3000)
             {
                 SetForegroundWindow(hwnd);
+                
+                // [WINAPI FAKE INPUT] Giả lập tổ hợp phím Ctrl + W để đóng duyên dáng tab hiện tại
+                // thay vì giết toàn bộ trình duyệt, bảo vệ an toàn cho dữ liệu người dùng.
                 INPUT inputs[4] = {};
                 
                 inputs[0].type = INPUT_KEYBOARD;
@@ -140,7 +156,6 @@ void WebItem::checkAndEnforce(HWND hwnd, DWORD pid, int globalLimitMinutes)
                 inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
                 
                 SendInput(4, inputs, sizeof(INPUT));
-                
                 lastClosedTime = GetTickCount();
             }
         }

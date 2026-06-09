@@ -1,3 +1,17 @@
+/*
+ * ============================================================================
+ * FILE: DataStore.cpp
+ * VAI TRÒ: Trái tim lưu trữ (Repository), quản lý toàn bộ cấu trúc dữ liệu.
+ *
+ * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Nguyên lý SRP (Single Responsibility Principle): Tách biệt hoàn toàn 
+ * logic xử lý dữ liệu khỏi Giao diện (ConsoleMenu) và Bộ quét (TrackingEngine).
+ * Mọi thao tác I/O đọc/ghi CSV đều được đẩy sang FileIO (CsvEngine).
+ * 2. Tối ưu I/O (Caching): Sử dụng cơ chế nạp sẵn (s_cachedBasicList) vào 
+ * RAM để tránh tình trạng thắt cổ chai (Bottleneck) do đọc ổ cứng liên tục.
+ * ============================================================================
+ */
+
 #include "../include/DataStore.h"
 #include "../include/FileIO.h"
 #include <sstream>
@@ -24,15 +38,12 @@ void UsageRepository::loadBasicList(const std::string& filename)
     s_cachedBasicList.clear();
     auto csvData = CsvEngine::readCSV(filename);
     int globalItemId = 1;
-    
     for (const auto& row : csvData)
     {
         if (row.size() < 4)
             continue;
-            
         std::string romanID = row[0], categoryTitle = row[1], itemName = row[3];
         bool foundCat = false;
-        
         for (auto& cat : s_cachedBasicList)
         {
             if (cat.romanID == romanID)
@@ -91,7 +102,6 @@ bool UsageRepository::saveAllActiveLimits(const std::vector<ActiveLimit>& limits
 {
     std::vector<std::string> lines;
     lines.reserve(limits.size());
-    
     for (const auto& l : limits)
     {
         lines.push_back(std::to_string(l.type) + "," + l.name + "," + std::to_string(l.timeLimit));
@@ -104,7 +114,6 @@ void UsageRepository::addOrUpdateActiveLimit(const ActiveLimit& limit)
 {
     auto limits = getActiveLimits();
     bool found = false;
-    
     for (auto& l : limits)
     {
         if (l.name == limit.name)
@@ -126,7 +135,6 @@ void UsageRepository::addOrUpdateActiveLimit(const ActiveLimit& limit)
 void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, int timeMins)
 {
     if (timeMins <= 0) return;
-    
     for (int id : ids)
     {
         for (const auto& cat : s_cachedBasicList)
@@ -135,6 +143,7 @@ void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, int timeM
             {
                 if (item.id == id)
                 {
+       
                     addOrUpdateActiveLimit(ActiveLimit(1, item.name, timeMins));
                 }
             }
@@ -145,20 +154,19 @@ void UsageRepository::addLimitsByBasicIds(const std::vector<int>& ids, int timeM
 std::vector<DisplayLimit> UsageRepository::getSortedDisplayLimits()
 {
     auto allLimits = getActiveLimits();
-    
     auto sortAlpha = [](const ActiveLimit& a, const ActiveLimit& b)
     { 
-        return a.name < b.name; 
+        return a.name < b.name;
     };
     
     std::sort(allLimits.begin(), allLimits.end(), sortAlpha);
     
     std::vector<DisplayLimit> result;
     int displayId = 1;
-    
     for (const auto& limit : allLimits)
     {
-        std::string typeStr = (limit.type == 1) ? "Co ban" : "Tuy chon";
+        std::string typeStr = (limit.type == 1) ?
+        "Co ban" : "Tuy chon";
         result.push_back({displayId++, typeStr, limit.name, limit.timeLimit});
     }
     
@@ -179,7 +187,6 @@ bool UsageRepository::removeLimitsByDisplayIds(const std::vector<int>& displayId
 
     auto allLimits = getActiveLimits();
     std::vector<ActiveLimit> limitsToKeep;
-    
     for (const auto& limit : allLimits)
     {
         if (namesToRemove.find(limit.name) == namesToRemove.end())
@@ -198,8 +205,9 @@ std::unordered_map<std::string, int> UsageRepository::loadDailyUsage()
     
     auto csvData = CsvEngine::readCSV("daily_usage.csv");
 
+    // Tự động xoá sạch nhật ký cũ nếu phát hiện ngày lưu trữ khác với ngày hiện tại của hệ thống.
+    // Đảm bảo File CSV không bị phình to gây tốn bộ nhớ.
     bool isOldData = (!csvData.empty() && csvData[0].size() >= 3 && csvData[0][0] != today);
-
     if (isOldData)
     {
         CsvEngine::clearFile("daily_usage.csv");

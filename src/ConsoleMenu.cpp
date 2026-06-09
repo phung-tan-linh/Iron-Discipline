@@ -1,6 +1,19 @@
-// [PLAN]: Áp dụng triệt để SRP. ConsoleMenu chỉ chịu trách nhiệm hiển thị UI và điều hướng luồng.
-// Loại bỏ hoàn toàn việc lưu trữ basicList. Giao tiếp với DataStore thông qua các hàm getCachedBasicList,
-// getAllBasicItemIds, addLimitsByBasicIds và removeLimitsByDisplayIds.
+/*
+ * ============================================================================
+ * FILE: ConsoleMenu.cpp
+ * VAI TRÒ: Quản lý giao diện dòng lệnh (CLI) và điều hướng luồng người dùng.
+ *
+ * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Nguyên lý SRP (Single Responsibility Principle): Tách biệt hoàn toàn
+ * phần hiển thị (View) khỏi phần xử lý dữ liệu. Tệp này chỉ chịu trách nhiệm
+ * in Menu và nhận lệnh, mọi thao tác lưu trữ/đọc xuất đều được ủy quyền 
+ * sang DataStore thông qua các hàm getCachedBasicList, addLimitsByBasicIds...
+ * 2. Lập trình phòng thủ (Defensive Programming): Kết hợp chặt chẽ với
+ * InputValidator để kiểm duyệt toàn bộ dữ liệu đầu vào. Chặn đứng các rủi ro
+ * người dùng nhập sai kiểu (nhập chữ thay vì số), ngăn ngừa hoàn toàn các
+ * lỗi crash ứng dụng (Invalid Argument) trong quá trình vận hành ngầm.
+ * ============================================================================
+ */
 #include "../include/ConsoleMenu.h"
 #include "../include/DataStore.h"
 #include "../include/InputValidator.h"

@@ -1,4 +1,3 @@
-// [PLAN]: Áp dụng SOLID chia tách SystemScanner (WinAPI) và TimeEnforcer (Logic). Tối ưu 100% CPU bằng std::unordered_map tra cứu O(1) và Caching HWND. Chuẩn hóa Key sang chữ thường 1 lần lúc nạp. Chỉ transform tên tiến trình hiện tại khi HWND thay đổi, loại bỏ vòng lặp O(N) tốn kém.
 #ifndef TRACKING_ENGINE_H
 #define TRACKING_ENGINE_H
 

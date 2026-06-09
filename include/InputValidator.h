@@ -1,4 +1,3 @@
-// [PLAN]: Khai báo các hàm tĩnh xử lý Validation. Tách biệt hoàn toàn logic kiểm tra tính hợp lệ của dữ liệu đầu vào khỏi ConsoleMenu.
 #ifndef INPUT_VALIDATOR_H
 #define INPUT_VALIDATOR_H
 

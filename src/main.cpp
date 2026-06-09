@@ -1,6 +1,19 @@
-// [PLAN]: Tích hợp TrackingEngine, quản lý Single Instance, Tray Icon và Console Worker.
-// Thêm tính năng Auto-Start qua Registry (HKCU) để tự động chạy ngầm cùng Windows
-// bằng quyền User thường, loại bỏ hoàn toàn sự phụ thuộc vào quyền Admin (UAC).
+/*
+ * ============================================================================
+ * FILE: main.cpp
+ * VAI TRÒ: Điểm neo khởi chạy ứng dụng (Entry Point), thiết lập luồng hệ thống.
+ *
+ * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Single Instance Pattern (Mẫu Đơn Tiến Trình): Sử dụng CreateMutexW để
+ * đảm bảo tại một thời điểm chỉ có 1 bản thể Iron Discipline chạy trong RAM.
+ * 2. Low-Level Keyboard Hooking (Móc phím cấp thấp): Sử dụng hàm API 
+ * SetWindowsHookExW để chặn đứng mọi lối thoát (Alt+Tab, Windows, Alt+F4) 
+ * ngay khi Cảnh báo hết giờ bật lên, tước đoạt quyền kiểm soát từ tay User.
+ * 3. Auto-start an toàn: Ghi thẳng vào Registry (HKCU) để phần mềm tự khởi 
+ * động ngầm theo User hiện tại mà không cần quyền Admin.
+ * ============================================================================
+ */
+
 #ifndef UNICODE
 #define UNICODE
 #define _UNICODE
@@ -14,12 +27,12 @@
 #include "../include/ConsoleMenu.h"
 #include "../include/UIManager.h"
 #include "../include/TrackingEngine.h"
+#include "../include/FileIO.h"
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_ACTIVATE_OLD_INSTANCE (WM_USER + 2)
 
 extern std::atomic<int> g_WarningActive;
-
 TimeEnforcer g_Engine;
 std::atomic<bool> isConsoleOpen(false);
 const wchar_t CLASS_NAME[] = L"IronDisciplineHiddenWindow";
@@ -34,6 +47,7 @@ void RegisterAutoStart()
     }
 
     HKEY hKey;
+    // Ghi vào HKCU (HKEY_CURRENT_USER) giúp app khởi động ngầm không đòi quyền Admin (Bypass UAC)
     LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey);
     if (status == ERROR_SUCCESS)
     {
@@ -65,9 +79,14 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         {
             bool isAlt = (pKeyBoard->flags & LLKHF_ALTDOWN) != 0;
             bool isCtrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            
+            // Nếu có cảnh báo phạt: Vô hiệu hóa Alt+Tab, Windows Key (LWIN/RWIN), Ctrl+Esc, Alt+F4.
+            // Bắt hệ điều hành trả về 1 (Drop event) để hủy lệnh bấm phím, khóa user vào màn hình phạt.
             if ((pKeyBoard->vkCode == VK_TAB && isAlt) || pKeyBoard->vkCode == VK_LWIN || pKeyBoard->vkCode == VK_RWIN || (pKeyBoard->vkCode == VK_ESCAPE && isCtrl) || (pKeyBoard->vkCode == VK_F4 && isAlt))
                 return 1;
         }
+        
+        // Cơ chế ẩn Console ngầm thay vì đóng hẳn App khi người dùng nhấn Alt+F4 vào Console
         if (wParam == WM_SYSKEYDOWN && pKeyBoard->vkCode == VK_F4)
         {
             if (GetAsyncKeyState(VK_MENU) & 0x8000)
@@ -82,6 +101,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
             }
         }
     }
+    // Chuyển tiếp (Chain) các sự kiện phím hợp lệ về lại cho Windows xử lý
     return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
 }
 
@@ -94,9 +114,11 @@ void RunConsoleWorker()
     HWND hConsole = GetConsoleWindow();
     if (hConsole != NULL)
     {
+        // Gỡ bỏ nút "X" trên cửa sổ Console để ép người dùng thoát app qua Menu (Lựa chọn 2)
         HMENU hSysMenu = GetSystemMenu(hConsole, FALSE);
         if (hSysMenu != NULL)
             DeleteMenu(hSysMenu, SC_CLOSE, MF_BYCOMMAND);
+            
         LONG_PTR exStyle = GetWindowLongPtr(hConsole, GWL_EXSTYLE);
         exStyle = (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
         SetWindowLongPtr(hConsole, GWL_EXSTYLE, exStyle);
@@ -171,6 +193,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
 {
+    // Cắm cờ Mutex vào vùng nhớ chung (Global). Nếu App thứ 2 khởi chạy, nó sẽ thấy cờ này và tự hủy.
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"IronDiscipline_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
@@ -180,11 +203,15 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
             DWORD pid = 0;
             GetWindowThreadProcessId(hExistingWnd, &pid);
             AllowSetForegroundWindow(pid);
+            
+            // Gửi thông điệp đánh thức bản thể đầu tiên đang chạy ngầm
             PostMessageW(hExistingWnd, WM_ACTIVATE_OLD_INSTANCE, 0, 0);
         }
         CloseHandle(hMutex);
         return 0;
     }
+
+    CsvEngine::ensureFilesExist({"active_limits.csv", "daily_usage.csv"});
     
     RegisterAutoStart();
     
@@ -199,7 +226,6 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     if (!RegisterClassW(&wc))
         return 0;
-        
     HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Tray Background Worker", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
     if (hwnd == NULL)
         return 0;
@@ -214,6 +240,7 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
     wcsncpy_s(nid.szTip, L"Kỉ luật thép - Iron Discipline", _TRUNCATE);
     Shell_NotifyIconW(NIM_ADD, &nid);
     
+    // Đăng ký Móc hàm (Hook) vào hệ thống xử lý bàn phím của Windows (WH_KEYBOARD_LL)
     g_hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInstance, 0);
     
     MSG msg;
@@ -227,7 +254,6 @@ extern "C" int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, L
         UnhookWindowsHookEx(g_hKeyboardHook);
         
     Shell_NotifyIconW(NIM_DELETE, &nid);
-    
     UIManager::Cleanup();
     
     if (hMutex)

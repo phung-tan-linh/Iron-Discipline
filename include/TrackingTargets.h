@@ -1,6 +1,3 @@
-// [PLAN]: Gộp AppItem, WebItem và TrackableItem. Áp dụng OOP Đa hình (Polymorphism) với hàm ảo checkAndEnforce.
-// Loại bỏ TimePool, sử dụng biến timeUsedSeconds độc lập. Chuyển cờ cảnh báo lên lớp cơ sở.
-// Thêm biến lastClosedTime vào WebItem để hỗ trợ kỹ thuật Debounce chống lỗi Chain-Reaction Closing.
 #ifndef TRACKING_TARGETS_H
 #define TRACKING_TARGETS_H
 

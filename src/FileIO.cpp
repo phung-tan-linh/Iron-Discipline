@@ -1,9 +1,25 @@
+/*
+ * ============================================================================
+ * FILE: FileIO.cpp
+ * VAI TRÒ: Tầng tương tác vật lý (I/O Engine), chuyên trách đọc/ghi file tĩnh.
+ *
+ * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. An toàn Đa luồng (Thread-Safety & Synchronization): Sử dụng kỹ thuật 
+ * khóa Mutex đệ quy (std::recursive_mutex) kết hợp với quản lý vòng đời RAII 
+ * (std::lock_guard). Cơ chế này ngăn chặn triệt để lỗi xung đột tài nguyên 
+ * (Race Condition) khi luồng hệ thống (Tracking) và luồng giao diện (UI) 
+ * vô tình cùng lúc ghi đè hoặc truy xuất file CSV.
+ * 2. Tách biệt Mối quan tâm (Separation of Concerns / SRP): Lớp CsvEngine 
+ * được thiết kế hoàn toàn "mù" (agnostic) với logic ứng dụng. Nó chỉ nhận và 
+ * trả về các mảng chuỗi 2 chiều (std::vector<std::vector<std::string>>), đảm 
+ * bảo tính module hóa cực cao cho kiến trúc phần mềm.
+ * ============================================================================
+ */
 #include "../include/FileIO.h"
 #include <fstream>
 #include <sstream>
 #include <mutex>
 
-// Quản lý Thread-safe nội bộ cho các thao tác I/O ổ cứng
 static std::recursive_mutex s_fileMutex;
 
 namespace
@@ -71,4 +87,15 @@ bool CsvEngine::clearFile(const std::string& filename)
     std::lock_guard<std::recursive_mutex> lock(s_fileMutex);
     std::ofstream file(filename, std::ios::trunc);
     return file.is_open();
+}
+
+void CsvEngine::ensureFilesExist(const std::vector<std::string>& filenames) {
+    std::lock_guard<std::recursive_mutex> lock(s_fileMutex);
+    
+    for (const auto& filename : filenames) {
+        std::ifstream checkFile(filename);
+        if (!checkFile.is_open()) {
+            std::ofstream createFile(filename);
+        }
+    }
 }

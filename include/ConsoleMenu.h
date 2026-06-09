@@ -1,4 +1,3 @@
-// [PLAN]: Dọn dẹp ConsoleMenu, gỡ bỏ toàn bộ code gọi Analytics, cập nhật Main Menu chỉ còn các tùy chọn quản lý Giới hạn.
 #ifndef CONSOLE_MENU_H
 #define CONSOLE_MENU_H
 

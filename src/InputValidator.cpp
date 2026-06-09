@@ -1,4 +1,18 @@
-// [PLAN]: Triển khai InputValidator. Xử lý các vòng lặp kiểm tra mảng ID và chuỗi hợp lệ, đảm bảo trả về dữ liệu sạch 100% cho ConsoleMenu.
+/*
+ * ============================================================================
+ * FILE: InputValidator.cpp
+ * VAI TRÒ: Tấm khiên bảo vệ (Validator), chuyên trách xử lý và làm sạch luồng đầu vào.
+ *
+ * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Lập trình phòng thủ (Defensive Programming): Quản lý chặt chẽ trạng thái
+ * của luồng nhập (std::cin.clear/fail). Sử dụng try-catch kết hợp với các vòng 
+ * lặp giới hạn số lần thử (max 3 lần) để chặn đứng triệt để các lỗi Crash ứng 
+ * dụng (Exception) do người dùng cố tình nhập sai kiểu dữ liệu.
+ * 2. Nguyên lý SRP (Single Responsibility Principle): Bóc tách hoàn toàn
+ * logic kiểm duyệt dữ liệu thô khỏi tầng Giao diện (ConsoleMenu), đảm bảo dữ
+ * liệu trước khi được đưa vào DataStore để xử lý đều là dữ liệu sạch 100%.
+ * ============================================================================
+ */
 #include "../include/InputValidator.h"
 #include <sstream>
 #include <algorithm>

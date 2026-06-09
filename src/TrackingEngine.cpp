@@ -1,4 +1,16 @@
-// [PLAN]: Triển khai TrackingEngine. SystemScanner chuyên trách WinAPI. TimeEnforcer dùng .find() O(1) cho App và duyệt nhẹ cho Web. Tối ưu CPU bằng cách cache HWND, ProcessName và WindowTitle. Ghi Append-Log mỗi khi chạm mốc 60 giây.
+/*
+ * ============================================================================
+ * FILE: TrackingEngine.cpp
+ * VAI TRÒ: Bộ máy quét hệ thống (System Scanner & Time Enforcer).
+ * * ĐIỂM NHẤN HỌC THUẬT:
+ * 1. Tối ưu Tra cứu: Sử dụng cấu trúc dữ liệu std::unordered_map mang lại độ
+ * phức tạp O(1), giúp tra cứu mục tiêu cực nhanh mà không gây nghẽn CPU.
+ * 2. Tối ưu Hiệu năng (Caching): Áp dụng kỹ thuật bộ đệm (Tuple Cache) giữ lại 
+ * [HWND, WindowTitle] để tránh việc phải liên tục ép kiểu chuỗi (tolower) 
+ * ở tốc độ cao. Giúp ứng dụng chạy ngầm với mức tiêu thụ CPU tiệm cận 0%.
+ * ============================================================================
+ */
+
 #include "../include/TrackingEngine.h"
 #include "../include/DataStore.h"
 #include <psapi.h>
@@ -20,6 +32,7 @@ std::string SystemScanner::getActiveWindowTitle(HWND hwnd)
 std::string SystemScanner::getActiveProcessName(DWORD pid)
 {
     std::string processName = "";
+    // [WINAPI] Xin quyền đọc thông tin tiến trình từ hệ điều hành.
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
     if (hProcess != NULL)
     {
@@ -33,6 +46,7 @@ std::string SystemScanner::getActiveProcessName(DWORD pid)
                 processName = fullPath.substr(pos + 1);
             }
         }
+        // Luôn phải dọn dẹp Handle để tránh rò rỉ bộ nhớ (Memory Leak)
         CloseHandle(hProcess);
     }
     return processName;
@@ -52,10 +66,10 @@ void TimeEnforcer::reloadLimits()
         std::string keyLower = limit.name;
         std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
                        [](unsigned char c) { return std::tolower(c); });
-
         int usedSecs = dailyUsage[limit.name];
         std::shared_ptr<TrackableItem> item;
 
+        // Phân loại tự động giữa App và Web dựa trên phần mở rộng .exe
         if (limit.name.find(".exe") != std::string::npos)
         {
             item = std::make_shared<AppItem>(limit.name, limit.timeLimit, usedSecs);
@@ -65,6 +79,7 @@ void TimeEnforcer::reloadLimits()
             item = std::make_shared<WebItem>(limit.name, limit.timeLimit, usedSecs);
         }
 
+        // Đẩy vào unordered_map để sau này tra cứu với chi phí O(1)
         activeTargets[keyLower] = item;
     }
 }
@@ -73,7 +88,7 @@ void TimeEnforcer::monitorAndBlock()
 {
     currentDate = UsageRepository::getCurrentDateStr();
     reloadLimits();
-
+    
     static HWND lastHwnd = NULL;
     static std::string lastWindowTitleRaw = "";
     static std::string cachedProcessName = "";
@@ -93,7 +108,9 @@ void TimeEnforcer::monitorAndBlock()
         if (currentHwnd)
         {
             std::string currentTitle = SystemScanner::getActiveWindowTitle(currentHwnd);
-
+            
+            // [BẢO VỆ CPU] Tuple Caching: Chỉ thực thi phân tích chuỗi nếu Handle cửa sổ (HWND) 
+            // HOẶC Tiêu đề (Title) thực sự thay đổi. Tránh việc gọi WinAPI vô ích.
             if (currentHwnd != lastHwnd || currentTitle != lastWindowTitleRaw)
             {
                 lastHwnd = currentHwnd;
@@ -102,7 +119,7 @@ void TimeEnforcer::monitorAndBlock()
                 GetWindowThreadProcessId(currentHwnd, &cachedPid);
                 cachedProcessName = SystemScanner::getActiveProcessName(cachedPid);
                 cachedWindowTitle = currentTitle;
-
+                
                 std::transform(cachedProcessName.begin(), cachedProcessName.end(), cachedProcessName.begin(),
                                [](unsigned char c) { return std::tolower(c); });
                 std::transform(cachedWindowTitle.begin(), cachedWindowTitle.end(), cachedWindowTitle.begin(),
@@ -111,6 +128,7 @@ void TimeEnforcer::monitorAndBlock()
 
             std::shared_ptr<TrackableItem> matchedItem = nullptr;
 
+            // Tra cứu O(1) cho Application
             auto it = activeTargets.find(cachedProcessName);
             if (it != activeTargets.end() && it->second->getType() == "Application")
             {
@@ -134,6 +152,9 @@ void TimeEnforcer::monitorAndBlock()
             if (matchedItem)
             {
                 matchedItem->addTimeUsedSeconds(1);
+                
+                // [ĐA HÌNH MỨC 4] Gọi hàm ảo. Tự bản thân AppItem hoặc WebItem 
+                // sẽ biết phải dùng thuật toán trừng phạt nào mà không cần lệnh if-else cồng kềnh.
                 matchedItem->checkAndEnforce(currentHwnd, cachedPid, matchedItem->getTimeLimit());
 
                 int currentSecs = matchedItem->getTimeUsedSeconds();
@@ -144,6 +165,7 @@ void TimeEnforcer::monitorAndBlock()
             }
         }
 
+        // Nhường CPU cho các tiến trình khác, giảm tải luồng (Thread optimization)
         MsgWaitForMultipleObjects(0, NULL, FALSE, 1000, QS_ALLEVENTS);
     }
 }
